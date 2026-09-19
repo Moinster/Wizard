@@ -1,0 +1,901 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#151120">
+<title>Wizard Scorekeeper</title>
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Archivo:wght@400;500;600;700;800;900&family=Fraunces:opsz,wght@9..144,600;9..144,800&display=swap">
+<style>
+:root{
+  --bg:#F1EFF6; --bg-deep:#E4DFEE; --surface:#FFFFFF; --surface-2:#F8F5FC;
+  --line:#DBD4E8; --line-strong:#C4B9D8;
+  --ink:#171220; --ink-2:#554B67; --ink-3:#8B81A1;
+  --accent:#6B3FA0; --accent-ink:#FFFFFF; --accent-soft:#EEE5F9;
+  --gold:#9A6407; --gold-soft:#FAEFD6;
+  --good:#1B7A57; --good-soft:#DCF2E8;
+  --bad:#B0382C; --bad-soft:#FBE4E1; --heart:#B0382C;
+  --shadow-sm:0 1px 2px rgba(23,18,32,.07);
+  --shadow-md:0 2px 4px rgba(23,18,32,.06), 0 14px 30px -18px rgba(23,18,32,.45);
+  --radius:14px; --tap:48px;
+  color-scheme:light;
+}
+@media (prefers-color-scheme: dark){ :root:not([data-theme="light"]){
+  --bg:#151120; --bg-deep:#0C0912; --surface:#1F1930; --surface-2:#271F3A;
+  --line:#352C4B; --line-strong:#4A3E65;
+  --ink:#F3EFFB; --ink-2:#B7AECB; --ink-3:#847A9C;
+  --accent:#AC80EC; --accent-ink:#1A1026; --accent-soft:#2D2244;
+  --gold:#F2B44A; --gold-soft:#39280B;
+  --good:#4BCB9E; --good-soft:#123328;
+  --bad:#FF7E71; --bad-soft:#3A1A17; --heart:#FF7E71;
+  --shadow-sm:0 1px 2px rgba(0,0,0,.45);
+  --shadow-md:0 2px 4px rgba(0,0,0,.4), 0 18px 36px -20px rgba(0,0,0,.9);
+  color-scheme:dark;
+}}
+:root[data-theme="dark"]{
+  --bg:#151120; --bg-deep:#0C0912; --surface:#1F1930; --surface-2:#271F3A;
+  --line:#352C4B; --line-strong:#4A3E65;
+  --ink:#F3EFFB; --ink-2:#B7AECB; --ink-3:#847A9C;
+  --accent:#AC80EC; --accent-ink:#1A1026; --accent-soft:#2D2244;
+  --gold:#F2B44A; --gold-soft:#39280B;
+  --good:#4BCB9E; --good-soft:#123328;
+  --bad:#FF7E71; --bad-soft:#3A1A17; --heart:#FF7E71;
+  --shadow-sm:0 1px 2px rgba(0,0,0,.45);
+  --shadow-md:0 2px 4px rgba(0,0,0,.4), 0 18px 36px -20px rgba(0,0,0,.9);
+  color-scheme:dark;
+}
+*,*::before,*::after{box-sizing:border-box}
+html,body{height:100%}
+body{
+  margin:0;background:var(--bg);color:var(--ink);
+  font-family:"Archivo","Helvetica Neue",Arial,sans-serif;font-size:16px;line-height:1.45;
+  -webkit-text-size-adjust:100%;-webkit-tap-highlight-color:transparent;
+  padding-top:env(safe-area-inset-top,0px);
+}
+button,input{font:inherit;color:inherit}
+button{cursor:pointer;border:0;background:none}
+:focus-visible{outline:3px solid var(--accent);outline-offset:2px;border-radius:8px}
+h1,h2,h3{margin:0;text-wrap:balance}
+.num{font-variant-numeric:tabular-nums;font-feature-settings:"tnum" 1}
+.app{min-height:100%;display:flex;flex-direction:column;max-width:760px;margin-inline:auto;padding-inline:16px}
+
+.topbar{position:sticky;top:env(safe-area-inset-top,0px);z-index:30;display:flex;align-items:center;gap:10px;
+  padding-block:12px 10px;flex-wrap:nowrap;background:linear-gradient(var(--bg) 72%, transparent)}
+.brand{display:flex;align-items:baseline;gap:8px;margin-right:auto;min-width:0;overflow:hidden}
+.brand svg{width:22px;height:22px;flex:none;align-self:center;color:var(--accent)}
+.brand h1{font-family:"Fraunces",Georgia,serif;font-weight:800;font-size:1.2rem;letter-spacing:-.01em}
+.brand .sub{font-size:.62rem;text-transform:uppercase;letter-spacing:.16em;color:var(--ink-3);font-weight:700;white-space:nowrap}
+.topbar-actions{display:flex;gap:6px;flex:none}
+.icon-btn{height:38px;padding:0 11px;border-radius:999px;flex:none;border:1px solid var(--line);
+  background:var(--surface);color:var(--ink-2);font-size:.78rem;font-weight:700;
+  display:inline-flex;align-items:center;gap:6px;box-shadow:var(--shadow-sm)}
+.icon-btn:hover{border-color:var(--line-strong);color:var(--ink)}
+@media (max-width:470px){ .brand .sub{display:none} .icon-btn{padding:0 10px;font-size:.74rem} }
+
+main{flex:1 1 auto;padding-bottom:28px;display:flex;flex-direction:column;gap:16px}
+.panel{background:var(--surface);border:1px solid var(--line);border-radius:var(--radius);
+  box-shadow:var(--shadow-sm);padding:16px}
+.panel-title{font-size:.68rem;text-transform:uppercase;letter-spacing:.14em;font-weight:800;color:var(--ink-3);margin-bottom:12px}
+.lede{font-family:"Fraunces",Georgia,serif;font-size:1.5rem;font-weight:600;line-height:1.2;margin-bottom:6px}
+.lede em{font-style:normal;color:var(--accent)}
+.lede-sub{color:var(--ink-2);font-size:.92rem;max-width:46ch}
+
+.btn{display:flex;align-items:center;justify-content:center;gap:8px;width:100%;min-height:54px;padding:0 20px;
+  border-radius:13px;background:var(--accent);color:var(--accent-ink);font-weight:800;font-size:1rem;box-shadow:var(--shadow-md)}
+.btn:disabled{background:var(--line);color:var(--ink-3);box-shadow:none;cursor:not-allowed}
+.btn-ghost{background:transparent;color:var(--ink-2);border:1px solid var(--line);box-shadow:none;min-height:46px;font-size:.88rem}
+.btn-ghost:hover{color:var(--ink);border-color:var(--line-strong)}
+.btn-row{display:flex;gap:8px;flex-wrap:wrap}
+.btn-row>*{flex:1 1 150px;width:auto}
+
+.field{display:flex;flex-direction:column;gap:6px;margin-bottom:12px}
+.field label{font-size:.7rem;text-transform:uppercase;letter-spacing:.12em;font-weight:800;color:var(--ink-3)}
+.field input{height:var(--tap);padding:0 14px;border-radius:11px;border:1px solid var(--line);
+  background:var(--surface-2);font-weight:600;width:100%}
+.field input:focus{background:var(--surface);border-color:var(--accent)}
+input.code-input{font-size:1.6rem;font-weight:900;letter-spacing:.3em;text-align:center;height:62px;text-transform:uppercase}
+
+.counter{display:flex;align-items:center;gap:14px}
+.counter-val{font-size:2rem;font-weight:800;min-width:2ch;text-align:center}
+.round-btn{width:var(--tap);height:var(--tap);border-radius:999px;flex:none;border:1px solid var(--line-strong);
+  background:var(--surface-2);font-size:1.35rem;font-weight:700;line-height:1;display:grid;place-items:center}
+.round-btn:disabled{opacity:.35;cursor:not-allowed}
+.counter-note{color:var(--ink-2);font-size:.85rem;line-height:1.3}
+
+/* ---- room code ---- */
+.code-hero{text-align:center;padding:6px 0 2px}
+.code-hero .kicker{font-size:.66rem;text-transform:uppercase;letter-spacing:.16em;font-weight:800;color:var(--ink-3)}
+.code-hero .code{font-weight:900;font-size:clamp(2.8rem,17vw,4.6rem);letter-spacing:.14em;line-height:1.05;color:var(--accent)}
+.code-hero .hint{color:var(--ink-2);font-size:.86rem;margin-top:2px}
+
+/* ---- scoreboard ---- */
+.board{display:grid;gap:8px}
+.tile{position:relative;background:var(--surface);border:1px solid var(--line);border-radius:var(--radius);
+  padding:10px 10px 8px;box-shadow:var(--shadow-sm);display:flex;flex-direction:column;align-items:center;gap:1px;overflow:hidden}
+.tile.leader{border-color:var(--gold);background:linear-gradient(180deg,var(--gold-soft),var(--surface) 62%)}
+.tile.you{outline:2px solid var(--accent);outline-offset:-2px}
+.tile-name{font-size:.78rem;font-weight:700;color:var(--ink-2);max-width:100%;overflow:hidden;
+  text-overflow:ellipsis;white-space:nowrap;display:flex;align-items:center;gap:4px}
+.tile.leader .tile-name{color:var(--gold)}
+.tile-name svg{width:12px;height:12px;flex:none}
+.tile-score{font-weight:900;line-height:.95;letter-spacing:-.035em;font-size:var(--score-size)}
+.tile-delta{font-size:.72rem;font-weight:800;padding:1px 7px;border-radius:999px;background:var(--surface-2);
+  color:var(--ink-3);min-height:19px;display:flex;align-items:center}
+.tile-delta.up{background:var(--good-soft);color:var(--good)}
+.tile-delta.down{background:var(--bad-soft);color:var(--bad)}
+.tile-delta.blank{opacity:0}
+.tile-dealer{position:absolute;top:6px;right:6px;width:17px;height:17px;border-radius:5px;background:var(--accent);
+  color:var(--accent-ink);font-size:.6rem;font-weight:900;display:grid;place-items:center}
+
+/* ---- round ---- */
+.round-head{display:flex;align-items:flex-end;justify-content:space-between;gap:12px;flex-wrap:wrap;margin-bottom:14px}
+.round-title{font-family:"Fraunces",Georgia,serif;font-size:1.55rem;font-weight:800;line-height:1;letter-spacing:-.01em}
+.round-meta{font-size:.82rem;color:var(--ink-2);margin-top:4px}
+.round-meta b{color:var(--ink);font-weight:700}
+.trumps{display:flex;gap:6px;flex-wrap:wrap}
+.trump{min-width:42px;height:38px;padding:0 10px;border-radius:10px;border:1px solid var(--line);
+  background:var(--surface-2);font-size:1.05rem;font-weight:700;color:var(--ink-2);display:grid;place-items:center}
+.trump[data-red="1"]{color:var(--heart)}
+.trump[aria-pressed="true"]{background:var(--accent);border-color:var(--accent);color:var(--accent-ink)}
+.trump.none{font-size:.72rem;font-weight:800;letter-spacing:.06em;text-transform:uppercase}
+.trump:disabled{opacity:.75;cursor:default}
+
+.your-turn{border:1px solid var(--accent);background:linear-gradient(180deg,var(--accent-soft),var(--surface) 70%)}
+.your-turn .panel-title{color:var(--accent)}
+.chips{display:flex;flex-wrap:wrap;gap:6px}
+.chip{min-width:52px;height:52px;padding:0 8px;border-radius:12px;border:1px solid var(--line);
+  background:var(--surface-2);font-size:1.15rem;font-weight:800;color:var(--ink-2);display:grid;place-items:center}
+.chip:hover{border-color:var(--line-strong);color:var(--ink)}
+.chip[aria-pressed="true"]{background:var(--accent);border-color:var(--accent);color:var(--accent-ink);box-shadow:var(--shadow-sm)}
+.chip[aria-pressed="true"].exact{background:var(--good);border-color:var(--good);color:#fff}
+.chip:disabled{opacity:.45;cursor:not-allowed}
+.chips.small .chip{min-width:44px;height:44px;font-size:1rem}
+
+.roster{display:flex;flex-direction:column}
+.roster-row{display:flex;align-items:center;gap:10px;padding:10px 0;border-top:1px solid var(--line)}
+.roster-row:first-child{border-top:0}
+.seat-pip{flex:none;width:30px;height:30px;border-radius:9px;background:var(--accent-soft);color:var(--accent);
+  font-size:.78rem;font-weight:800;display:grid;place-items:center}
+.seat-pip.empty{background:var(--surface-2);color:var(--ink-3)}
+.roster-name{flex:1 1 auto;min-width:0;font-weight:700;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.roster-name.empty{color:var(--ink-3);font-weight:600;font-style:italic}
+.badge{font-size:.62rem;font-weight:900;letter-spacing:.08em;text-transform:uppercase;padding:3px 7px;
+  border-radius:6px;background:var(--accent-soft);color:var(--accent);flex:none}
+.badge.quiet{background:var(--surface-2);color:var(--ink-3)}
+.badge.gold{background:var(--gold-soft);color:var(--gold)}
+.badge.good{background:var(--good-soft);color:var(--good)}
+.bid-chip{flex:none;min-width:34px;height:30px;border-radius:8px;display:grid;place-items:center;
+  font-weight:900;font-size:.95rem;background:var(--surface-2);color:var(--ink-3)}
+.bid-chip.in{background:var(--accent);color:var(--accent-ink)}
+
+.entry{border-top:1px solid var(--line);padding:12px 0}
+.entry:first-of-type{border-top:0;padding-top:0}
+.entry-head{display:flex;align-items:center;gap:8px;margin-bottom:8px}
+.entry-name{font-weight:800;font-size:1rem;flex:1 1 auto;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+
+.actionbar{position:sticky;bottom:0;z-index:25;padding-top:10px;
+  padding-bottom:calc(10px + env(safe-area-inset-bottom,0px));
+  background:linear-gradient(transparent, var(--bg) 26%);display:flex;flex-direction:column;gap:7px}
+.tally{display:flex;align-items:center;justify-content:center;gap:8px;font-size:.8rem;font-weight:700;color:var(--ink-2);text-align:center}
+.tally .pill{padding:2px 9px;border-radius:999px;background:var(--surface);border:1px solid var(--line)}
+.tally .pill.warn{background:var(--bad-soft);color:var(--bad);border-color:transparent}
+.tally .pill.ok{background:var(--good-soft);color:var(--good);border-color:transparent}
+
+.waiting{display:flex;align-items:center;gap:10px;color:var(--ink-2);font-size:.9rem;font-weight:600}
+.dot{width:8px;height:8px;border-radius:999px;background:var(--accent);animation:pulse 1.4s ease-in-out infinite;flex:none}
+@keyframes pulse{0%,100%{opacity:.25;transform:scale(.8)}50%{opacity:1;transform:scale(1.15)}}
+
+details.history{background:var(--surface);border:1px solid var(--line);border-radius:var(--radius);box-shadow:var(--shadow-sm)}
+details.history>summary{list-style:none;cursor:pointer;padding:14px 16px;display:flex;align-items:center;gap:8px;
+  font-size:.7rem;text-transform:uppercase;letter-spacing:.14em;font-weight:800;color:var(--ink-3)}
+details.history>summary::-webkit-details-marker{display:none}
+details.history>summary::after{content:"\25BE";margin-left:auto;font-size:.85rem;transition:transform .2s}
+details.history[open]>summary::after{transform:rotate(180deg)}
+.scroll-x{overflow-x:auto;-webkit-overflow-scrolling:touch}
+table.log{border-collapse:collapse;width:100%;font-size:.82rem;min-width:max-content}
+table.log th,table.log td{padding:7px 10px;text-align:center;white-space:nowrap}
+table.log thead th{font-size:.64rem;text-transform:uppercase;letter-spacing:.09em;color:var(--ink-3);
+  font-weight:800;border-bottom:1px solid var(--line)}
+table.log th.rnd,table.log td.rnd{text-align:left;position:sticky;left:0;background:var(--surface);z-index:1}
+table.log tbody tr{border-bottom:1px solid var(--line)}
+table.log tbody tr:last-child{border-bottom:0}
+.cell-bid{color:var(--ink-3);font-weight:600}
+.cell-delta{font-weight:800}
+.cell-delta.up{color:var(--good)}
+.cell-delta.down{color:var(--bad)}
+.history-foot{padding:12px 16px;border-top:1px solid var(--line)}
+.empty{padding:0 16px 16px;color:var(--ink-3);font-size:.85rem}
+
+.winner{background:linear-gradient(160deg,var(--gold-soft),var(--surface) 70%);border:1px solid var(--gold)}
+.winner .kicker{font-size:.66rem;text-transform:uppercase;letter-spacing:.16em;font-weight:800;color:var(--gold)}
+.winner .who{font-family:"Fraunces",Georgia,serif;font-size:2rem;font-weight:800;line-height:1.1;margin:2px 0}
+.winner .score-line{color:var(--ink-2);font-size:.9rem;font-weight:600}
+
+.overlay{position:fixed;inset:0;z-index:100;background:var(--bg-deep);display:flex;flex-direction:column;
+  padding:calc(16px + env(safe-area-inset-top,0px)) 16px calc(16px + env(safe-area-inset-bottom,0px));overflow-y:auto}
+.overlay[hidden]{display:none}
+.overlay-head{display:flex;align-items:center;gap:10px;margin-bottom:14px;flex:none}
+.overlay-head h2{font-family:"Fraunces",Georgia,serif;font-size:1.1rem;font-weight:800;margin-right:auto}
+.close-btn{width:40px;height:40px;border-radius:999px;border:1px solid var(--line);background:var(--surface);
+  color:var(--ink-2);font-size:1.1rem;line-height:1;display:grid;place-items:center;flex:none}
+.big-list{display:flex;flex-direction:column;gap:8px;flex:1 1 auto;justify-content:center}
+.big-row{display:flex;align-items:center;gap:12px;background:var(--surface);border:1px solid var(--line);
+  border-radius:16px;padding:10px 16px}
+.big-row.leader{border-color:var(--gold);background:linear-gradient(90deg,var(--gold-soft),var(--surface) 55%)}
+.big-rank{font-size:.95rem;font-weight:900;color:var(--ink-3);width:1.4em;flex:none}
+.big-row.leader .big-rank{color:var(--gold)}
+.big-name{flex:1 1 auto;min-width:0;font-weight:800;font-size:clamp(1rem,4.4vw,1.5rem);
+  overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.big-score{font-weight:900;letter-spacing:-.04em;line-height:.9;font-size:var(--big-size)}
+.overlay-foot{flex:none;padding-top:14px;text-align:center;color:var(--ink-3);font-size:.8rem;font-weight:600}
+.prose{max-width:60ch;color:var(--ink-2);font-size:.92rem}
+.prose h3{font-family:"Fraunces",Georgia,serif;font-size:1.05rem;font-weight:800;color:var(--ink);margin:18px 0 6px}
+.prose h3:first-child{margin-top:0}
+.prose p,.prose ul{margin:0 0 8px}
+.prose ul{padding-left:18px}
+.prose li{margin-bottom:4px}
+.prose b{color:var(--ink)}
+.rule-eq{display:inline-block;background:var(--surface);border:1px solid var(--line);border-radius:8px;
+  padding:2px 8px;font-weight:700;color:var(--ink)}
+
+.toast{position:fixed;left:50%;transform:translateX(-50%);bottom:calc(18px + env(safe-area-inset-bottom,0px));
+  z-index:200;background:var(--bad);color:#fff;font-weight:700;font-size:.86rem;padding:10px 16px;
+  border-radius:999px;box-shadow:var(--shadow-md);max-width:calc(100% - 32px);text-align:center}
+.toast[hidden]{display:none}
+.conn{font-size:.68rem;font-weight:800;text-transform:uppercase;letter-spacing:.1em;color:var(--ink-3);
+  display:flex;align-items:center;gap:6px;justify-content:center;padding-top:2px}
+.conn .led{width:7px;height:7px;border-radius:999px;background:var(--good)}
+.conn.stale .led{background:var(--bad)}
+.flash{animation:flash .5s ease-out}
+@keyframes flash{0%{transform:scale(1)}35%{transform:scale(1.08)}100%{transform:scale(1)}}
+@media (prefers-reduced-motion: reduce){ *{animation-duration:.001ms !important;transition-duration:.001ms !important} }
+</style>
+</head>
+<body>
+<div class="app">
+  <header class="topbar">
+    <div class="brand">
+      <svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M12 1.6 13.9 8l6.4 1.4-4.6 4.2 1 6.5-5.1-3-5.1 3 1-6.5L3 9.4 9.4 8 12 1.6Z"/></svg>
+      <h1>Wizard</h1><span class="sub">Scorekeeper</span>
+    </div>
+    <div class="topbar-actions" id="topbar-actions"></div>
+  </header>
+  <main id="main"></main>
+</div>
+<div class="overlay" id="overlay-table" hidden></div>
+<div class="overlay" id="overlay-rules" hidden></div>
+<div class="toast" id="toast" hidden></div>
+
+<script type="module">
+"use strict";
+
+const SESSION_KEY = "wizard.session.v1";
+const TRUMPS = [
+  { k:"S", glyph:"♠", name:"Spades", red:false },
+  { k:"H", glyph:"♥", name:"Hearts", red:true },
+  { k:"D", glyph:"♦", name:"Diamonds", red:true },
+  { k:"C", glyph:"♣", name:"Clubs", red:false },
+  { k:"N", glyph:"None", name:"No trump", red:false },
+];
+const ROUNDS_FOR = { 3:20, 4:15, 5:12, 6:10, 7:8, 8:7 };
+const CROWN = '<svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M3 18h18l1.2-11-5.4 3.9L12 3 7.2 10.9 1.8 7 3 18Z"/></svg>';
+
+const $ = (id) => document.getElementById(id);
+const esc = (s) => String(s).replace(/[&<>"']/g, (c) => ({ "&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;" }[c]));
+const signed = (n) => (n > 0 ? "+" : "") + n;
+const scoreFor = (bid, taken) => (bid === taken ? 20 + 10 * bid : -10 * Math.abs(bid - taken));
+
+/* ------------------------------ session ------------------------------ */
+let session = null;      // {code, hostKey, seatKey, seatIdx}
+let game = null;         // public view from the server
+let etag = null;
+let prevTotals = null;
+let polling = false;
+let stale = false;
+let setupDraft = { name:"", seats:4, rounds:null };
+let joinDraft = { name:"", code:"" };
+
+function loadSession(){
+  try { const raw = localStorage.getItem(SESSION_KEY); if (raw) return JSON.parse(raw); } catch {}
+  return null;
+}
+function saveSession(s){
+  session = s;
+  try { s ? localStorage.setItem(SESSION_KEY, JSON.stringify(s)) : localStorage.removeItem(SESSION_KEY); } catch {}
+}
+
+/* ------------------------------ transport ------------------------------ */
+function toast(msg){
+  const t = $("toast");
+  t.textContent = msg;
+  t.hidden = false;
+  clearTimeout(toast._t);
+  toast._t = setTimeout(() => { t.hidden = true; }, 3200);
+}
+
+async function api(body){
+  const res = await fetch("/api/game", {
+    method:"POST",
+    headers:{ "content-type":"application/json" },
+    body: JSON.stringify(body),
+  });
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) { toast(data.message || "That didn't work."); return null; }
+  return data;
+}
+
+async function poll(){
+  if (!session) return;
+  const q = new URLSearchParams({ code: session.code });
+  if (etag) q.set("etag", etag);
+  if (session.hostKey) q.set("hostKey", session.hostKey);
+  if (session.seatKey) q.set("seatKey", session.seatKey);
+  try {
+    const res = await fetch(`/api/game?${q}`, { cache:"no-store" });
+    if (res.status === 404) { toast("That game is gone."); saveSession(null); game = null; render(); return; }
+    const data = await res.json();
+    stale = false;
+    if (data.unchanged) return;
+    if (data.game) adopt(data);
+  } catch {
+    stale = true;
+    updateConn();
+  }
+}
+
+function adopt(data){
+  if (data.etag) etag = data.etag;
+  if (!data.game) return;
+  const before = game ? game.totals : null;
+  const scored = game && data.game.history.length !== game.history.length;
+  game = data.game;
+  if (scored && before) prevTotals = before;
+  render();
+  if (scored) animateTotals();
+}
+
+function startPolling(){
+  if (polling) return;
+  polling = true;
+  const tick = async () => {
+    if (!polling) return;
+    if (!document.hidden) await poll();
+    const gap = !game ? 2000 : game.status === "playing" ? 1300 : 2600;
+    setTimeout(tick, document.hidden ? 4000 : gap);
+  };
+  tick();
+}
+document.addEventListener("visibilitychange", () => { if (!document.hidden) poll(); });
+
+/* ------------------------------ derived ------------------------------ */
+function standings(){
+  const rows = game.seats.map((s) => ({ idx:s.idx, name:s.name, total:game.totals[s.idx] }));
+  rows.sort((a,b) => b.total - a.total);
+  let rank = 0, seen = null;
+  rows.forEach((r,i) => { if (r.total !== seen) { rank = i+1; seen = r.total; } r.rank = rank; });
+  return rows;
+}
+const bidsIn = () => Object.keys(game.bids).length;
+const allBidsIn = () => bidsIn() === game.seats.length;
+const trickSum = () => Object.values(game.tricks).reduce((a,b) => a+b, 0);
+const tricksIn = () => Object.keys(game.tricks).length;
+const myBid = () => (game.youIdx === null ? undefined : game.bids[game.youIdx]);
+
+/* ------------------------------ render ------------------------------ */
+function render(){
+  const actions = [];
+  if (game) actions.push('<button class="icon-btn" id="btn-table">Scores</button>');
+  actions.push('<button class="icon-btn" id="btn-rules">Rules</button>');
+  if (session) actions.push('<button class="icon-btn" id="btn-leave">Leave</button>');
+  $("topbar-actions").innerHTML = actions.join("");
+
+  const main = $("main");
+  if (!session || !game) main.innerHTML = homeHTML();
+  else if (game.status === "lobby") main.innerHTML = lobbyHTML();
+  else main.innerHTML = playHTML();
+
+  wire();
+  updateConn();
+}
+
+function updateConn(){
+  const el = document.querySelector(".conn");
+  if (el) el.classList.toggle("stale", stale);
+}
+
+/* ---- home ---- */
+function homeHTML(){
+  const n = setupDraft.seats;
+  const rounds = setupDraft.rounds ?? (ROUNDS_FOR[n] || 15);
+  return `
+  <div>
+    <p class="lede">Everyone bids from <em>their own phone.</em></p>
+    <p class="lede-sub">Start a game, read out the four-letter code, and the table joins. Bids come in from each player; the scorekeeper counts the tricks; every phone shows every score.</p>
+  </div>
+
+  <div class="panel">
+    <div class="panel-title">Start a game</div>
+    <div class="field">
+      <label for="host-name">Your name</label>
+      <input id="host-name" type="text" maxlength="14" autocomplete="off" placeholder="Scorekeeper" value="${esc(setupDraft.name)}">
+    </div>
+    <div class="field">
+      <label>Seats at the table</label>
+      <div class="counter">
+        <button class="round-btn" id="s-minus" ${n<=2?"disabled":""} aria-label="One seat fewer">&minus;</button>
+        <span class="counter-val num">${n}</span>
+        <button class="round-btn" id="s-plus" ${n>=8?"disabled":""} aria-label="One seat more">+</button>
+        <span class="counter-note">${ROUNDS_FOR[n]
+          ? `The 60-card deck deals out over <b>${rounds} rounds</b>.`
+          : `Over six players needs a second deck — <b>${rounds} rounds</b>.`}</span>
+      </div>
+    </div>
+    <div class="field">
+      <label>Rounds</label>
+      <div class="counter">
+        <button class="round-btn" id="r-minus" ${rounds<=1?"disabled":""} aria-label="One round fewer">&minus;</button>
+        <span class="counter-val num">${rounds}</span>
+        <button class="round-btn" id="r-plus" ${rounds>=20?"disabled":""} aria-label="One round more">+</button>
+        <span class="counter-note">Round 1 deals one card each and every round adds one.</span>
+      </div>
+    </div>
+    <button class="btn" id="do-create">Start a game</button>
+  </div>
+
+  <div class="panel">
+    <div class="panel-title">Join a game</div>
+    <div class="field">
+      <label for="join-name">Your name</label>
+      <input id="join-name" type="text" maxlength="14" autocomplete="off" placeholder="Your name" value="${esc(joinDraft.name)}">
+    </div>
+    <div class="field">
+      <label for="join-code">Game code</label>
+      <input id="join-code" class="code-input num" type="text" maxlength="4" autocomplete="off"
+             autocapitalize="characters" spellcheck="false" placeholder="––––" value="${esc(joinDraft.code)}">
+    </div>
+    <button class="btn btn-ghost" id="do-join">Join</button>
+  </div>`;
+}
+
+/* ---- lobby ---- */
+function lobbyHTML(){
+  const joined = game.seats.filter((s) => s.joined).length;
+  const link = `${location.origin}/g/${game.code}`;
+  const rows = game.seats.map((s) => `
+    <div class="roster-row">
+      <span class="seat-pip ${s.joined?"":"empty"}">${s.idx+1}</span>
+      <span class="roster-name ${s.joined?"":"empty"}">${s.joined ? esc(s.name) : "waiting…"}</span>
+      ${s.idx === game.youIdx ? '<span class="badge">You</span>' : ""}
+      ${s.joined ? '<span class="badge good">In</span>' : '<span class="badge quiet">Open</span>'}
+    </div>`).join("");
+
+  return `
+  <div class="panel">
+    <div class="code-hero">
+      <div class="kicker">Game code</div>
+      <div class="code num">${esc(game.code)}</div>
+      <div class="hint">Read it out, or send the link.</div>
+    </div>
+    <div class="btn-row" style="margin-top:12px">
+      <button class="btn btn-ghost" id="copy-link">Copy link</button>
+      ${navigator.share ? '<button class="btn btn-ghost" id="share-link">Share</button>' : ""}
+    </div>
+    <p class="lede-sub" style="margin-top:10px;font-size:.8rem">${esc(link)}</p>
+  </div>
+
+  <div class="panel">
+    <div class="panel-title">${joined} of ${game.seats.length} seats filled</div>
+    <div class="roster">${rows}</div>
+  </div>
+
+  ${game.isHost ? `
+  <div class="actionbar">
+    <div class="tally"><span class="pill">${joined < 2 ? "At least two players have to join" : `${game.rounds} rounds · ready when you are`}</span></div>
+    <button class="btn" id="do-start" ${joined < 2 ? "disabled" : ""}>Start the game</button>
+    <div class="conn"><span class="led"></span>${stale ? "Reconnecting" : "Live"}</div>
+  </div>` : `
+  <div class="panel">
+    <div class="waiting"><span class="dot"></span>Waiting for the scorekeeper to start.</div>
+    <div class="conn" style="justify-content:flex-start;padding-top:8px"><span class="led"></span>${stale ? "Reconnecting" : "Live"}</div>
+  </div>`}`;
+}
+
+/* ---- scoreboard ---- */
+function boardHTML(){
+  const rows = standings();
+  const byId = {}; rows.forEach((r) => { byId[r.idx] = r; });
+  const last = game.history[game.history.length - 1] || null;
+  const n = game.seats.length;
+  const cols = n <= 4 ? 2 : 3;
+  const size = cols === 2 ? "clamp(2.9rem, 14vw, 4.4rem)" : "clamp(2rem, 9.5vw, 3.2rem)";
+  const tiles = game.seats.map((s) => {
+    const row = byId[s.idx];
+    const lead = row.rank === 1 && row.total > 0;
+    let d = "", cls = "blank";
+    if (last && typeof last.bids[s.idx] === "number") {
+      const v = scoreFor(last.bids[s.idx], last.tricks[s.idx]);
+      d = signed(v); cls = v >= 0 ? "up" : "down";
+    }
+    return `<div class="tile${lead?" leader":""}${s.idx===game.youIdx?" you":""}">
+      ${s.idx === game.dealer && game.status === "playing" ? '<span class="tile-dealer" title="Dealer">D</span>' : ""}
+      <span class="tile-name">${lead?CROWN:""}${esc(s.name)}</span>
+      <span class="tile-score num" data-score-for="${s.idx}" data-value="${row.total}">${row.total}</span>
+      <span class="tile-delta ${cls}">${d || "0"}</span>
+    </div>`;
+  }).join("");
+  return `<div class="board" style="grid-template-columns:repeat(${cols},1fr);--score-size:${size}">${tiles}</div>`;
+}
+
+/* ---- play ---- */
+function playHTML(){
+  if (game.status === "done") return boardHTML() + winnerHTML() + historyHTML();
+  return boardHTML() + roundHTML() + historyHTML();
+}
+
+function roundHTML(){
+  const cards = game.cards;
+  const dealer = game.seats[game.dealer];
+  const first = game.seats[game.order[0]];
+  const isBid = game.phase === "bid";
+  const trumps = TRUMPS.map((t) => `
+    <button class="trump${t.k==="N"?" none":""}" data-trump="${t.k}" data-red="${t.red?1:0}"
+      aria-pressed="${game.trump===t.k}" title="${t.name}" aria-label="Trump: ${t.name}"
+      ${game.isHost ? "" : "disabled"}>${t.glyph}</button>`).join("");
+
+  const head = `
+    <div class="round-head">
+      <div>
+        <div class="round-title">Round ${game.round}<span style="color:var(--ink-3);font-weight:600"> / ${game.rounds}</span></div>
+        <div class="round-meta"><b>${cards} card${cards===1?"":"s"}</b> each · ${esc(dealer.name)} deals · ${esc(first.name)} bids first</div>
+      </div>
+      <div class="trumps" role="group" aria-label="Trump suit">${trumps}</div>
+    </div>`;
+
+  // Everyone sees who has bid what, in bid order.
+  const roster = game.order.map((idx) => {
+    const s = game.seats[idx];
+    const b = game.bids[idx];
+    const has = typeof b === "number";
+    const tags = [];
+    if (idx === game.dealer) tags.push('<span class="badge quiet">Dealer</span>');
+    if (idx === game.youIdx) tags.push('<span class="badge">You</span>');
+    let right;
+    if (isBid) right = `<span class="bid-chip ${has?"in":""}">${has ? b : "–"}</span>`;
+    else {
+      const k = game.tricks[idx];
+      const hit = typeof k === "number" && k === b;
+      right = `<span class="badge ${hit?"gold":"quiet"}">Bid ${b}</span>
+               <span class="bid-chip ${typeof k==="number"?"in":""}">${typeof k==="number"?k:"–"}</span>`;
+    }
+    return `<div class="roster-row">
+      <span class="seat-pip">${idx+1}</span>
+      <span class="roster-name">${esc(s.name)}</span>${tags.join("")}${right}
+    </div>`;
+  }).join("");
+
+  let mine = "";
+  if (isBid && game.youIdx !== null) {
+    const picked = myBid();
+    let chips = "";
+    for (let v = 0; v <= cards; v++) {
+      chips += `<button class="chip" data-mybid="${v}" aria-pressed="${picked===v}"
+        aria-label="Bid ${v}">${v}</button>`;
+    }
+    mine = `<div class="panel your-turn">
+      <div class="panel-title">${typeof picked === "number" ? "Your bid" : "Your bid — how many tricks will you take?"}</div>
+      <div class="chips">${chips}</div>
+      ${typeof picked === "number"
+        ? '<p class="lede-sub" style="margin-top:10px;font-size:.82rem">Tap another number to change it, until the scorekeeper closes bidding.</p>'
+        : ""}
+    </div>`;
+  }
+
+  let hostPanel = "";
+  if (game.isHost && !isBid) {
+    hostPanel = game.order.map((idx) => {
+      const s = game.seats[idx];
+      const picked = game.tricks[idx];
+      let chips = "";
+      for (let v = 0; v <= cards; v++) {
+        const on = picked === v;
+        const exact = on && game.bids[idx] === v;
+        chips += `<button class="chip${exact?" exact":""}" data-trick="${v}" data-idx="${idx}"
+          aria-pressed="${on}" aria-label="${esc(s.name)}: ${v} tricks">${v}</button>`;
+      }
+      return `<div class="entry">
+        <div class="entry-head"><span class="entry-name">${esc(s.name)}</span>
+          <span class="badge ${picked===game.bids[idx]?"gold":"quiet"}">Bid ${game.bids[idx]}</span></div>
+        <div class="chips small">${chips}</div>
+      </div>`;
+    }).join("");
+    hostPanel = `<div class="panel"><div class="panel-title">Tricks taken</div>${hostPanel}</div>`;
+  }
+
+  // Host can fill in a bid for a player whose phone died.
+  let fillIn = "";
+  if (game.isHost && isBid && !allBidsIn()) {
+    const missing = game.order.filter((i) => typeof game.bids[i] !== "number" && i !== game.youIdx);
+    if (missing.length) {
+      fillIn = `<details class="history"><summary>Enter a bid for someone</summary>
+        <div style="padding:0 16px 14px">${missing.map((idx) => {
+          let chips = "";
+          for (let v = 0; v <= cards; v++) chips += `<button class="chip" data-forbid="${v}" data-idx="${idx}" aria-label="${esc(game.seats[idx].name)} bids ${v}">${v}</button>`;
+          return `<div class="entry"><div class="entry-head"><span class="entry-name">${esc(game.seats[idx].name)}</span></div>
+            <div class="chips small">${chips}</div></div>`;
+        }).join("")}</div></details>`;
+    }
+  }
+
+  let bar = "";
+  if (isBid) {
+    const pending = game.order.filter((i) => typeof game.bids[i] !== "number");
+    const waiting = pending
+      .sort((a, b) => (a === game.youIdx ? -1 : b === game.youIdx ? 1 : 0))
+      .map((i) => (i === game.youIdx ? "you" : game.seats[i].name));
+    const hookDiff = Object.values(game.bids).reduce((a,b)=>a+b,0) - cards;
+    const status = allBidsIn()
+      ? (hookDiff === 0
+          ? `Bids total ${cards} — dead even, someone is going down`
+          : `Bids total ${cards + hookDiff} of ${cards} — ${Math.abs(hookDiff)} ${hookDiff>0?"over":"under"}`)
+      : `Waiting on ${waiting.slice(0,3).map(esc).join(", ")}${waiting.length>3?` +${waiting.length-3}`:""}`;
+    bar = `<div class="actionbar">
+      <div class="tally"><span class="pill${allBidsIn()&&hookDiff===0?" warn":""}">${status}</span></div>
+      ${game.isHost
+        ? `<button class="btn" id="to-tricks" ${allBidsIn()?"":"disabled"}>${allBidsIn()?"Close bidding — count the tricks →":"Every bid has to be in"}</button>`
+        : `<div class="waiting" style="justify-content:center"><span class="dot"></span>${allBidsIn()?"All bids in — play the round":"Bidding"}</div>`}
+      <div class="conn"><span class="led"></span>${stale?"Reconnecting":"Live"}</div>
+    </div>`;
+  } else {
+    const sum = trickSum(), valid = tricksIn() === game.seats.length && sum === cards;
+    const left = cards - sum;
+    const text = valid ? `All ${cards} trick${cards===1?"":"s"} accounted for`
+      : sum > cards ? `${sum} tricks entered — ${sum-cards} too many`
+      : `${left} trick${left===1?"":"s"} still unassigned`;
+    bar = `<div class="actionbar">
+      ${game.isHost ? `<div class="tally"><span class="pill ${valid?"ok":(sum>cards?"warn":"")}">${text}</span></div>
+        <button class="btn" id="do-score" ${valid?"":"disabled"}>${valid?`Score round ${game.round}`:`Tricks must total ${cards}`}</button>
+        <button class="btn btn-ghost" id="back-bids">Back to bidding</button>`
+        : `<div class="waiting" style="justify-content:center"><span class="dot"></span>The scorekeeper is counting tricks.</div>`}
+      <div class="conn"><span class="led"></span>${stale?"Reconnecting":"Live"}</div>
+    </div>`;
+  }
+
+  return `${mine}<div class="panel">${head}<div class="roster">${roster}</div></div>${fillIn}${hostPanel}${bar}`;
+}
+
+function winnerHTML(){
+  const rows = standings();
+  const top = rows.filter((r) => r.rank === 1);
+  const who = top.length > 1 ? top.map((r) => r.name).join(" & ") + " tie" : top[0].name + " wins";
+  return `<div class="panel winner">
+    <div class="kicker">${game.rounds} rounds played</div>
+    <div class="who">${esc(who)}</div>
+    <div class="score-line num">${top[0].total} points · ${rows[top.length] ? esc(rows[top.length].name)+" "+rows[top.length].total : "clean sweep"}</div>
+    <div class="btn-row" style="margin-top:14px">
+      <button class="btn" id="btn-table-2">Show the table</button>
+      ${game.isHost ? '<button class="btn btn-ghost" id="do-rematch">Rematch</button>' : ""}
+    </div>
+  </div>`;
+}
+
+function historyHTML(){
+  const head = game.seats.map((s) => `<th>${esc(s.name)}</th>`).join("");
+  const running = {}; game.seats.forEach((s) => { running[s.idx] = 0; });
+  const body = game.history.map((r) => {
+    const cells = game.seats.map((s) => {
+      const b = r.bids[s.idx], k = r.tricks[s.idx], v = scoreFor(b, k);
+      running[s.idx] += v;
+      return `<td><span class="cell-bid">${b} → ${k}</span><br>
+        <span class="cell-delta num ${v>=0?"up":"down"}">${signed(v)}</span></td>`;
+    }).join("");
+    const tr = TRUMPS.find((t) => t.k === r.trump);
+    return `<tr><td class="rnd"><b>R${r.round}</b>
+      <span style="color:var(--ink-3)">${r.cards}c${tr?" "+(tr.k==="N"?"—":tr.glyph):""}</span></td>${cells}</tr>`;
+  }).join("");
+  const totals = game.seats.map((s) => `<td class="num" style="font-weight:900">${running[s.idx]}</td>`).join("");
+  const inner = game.history.length
+    ? `<div class="scroll-x"><table class="log">
+         <thead><tr><th class="rnd">Round</th>${head}</tr></thead>
+         <tbody>${body}</tbody>
+         <tfoot><tr><td class="rnd" style="font-weight:800">Total</td>${totals}</tr></tfoot>
+       </table></div>
+       ${game.isHost ? `<div class="history-foot"><button class="btn btn-ghost" id="do-undo">Undo round ${game.history[game.history.length-1].round}</button></div>` : ""}`
+    : '<p class="empty">Nothing scored yet. Finish round 1 and it lands here.</p>';
+  return `<details class="history"><summary>Round log · ${game.history.length} scored</summary>${inner}</details>`;
+}
+
+/* ------------------------------ wiring ------------------------------ */
+function wire(){
+  const r = $("btn-rules"); if (r) r.onclick = openRules;
+  const t = $("btn-table"); if (t) t.onclick = openTable;
+  const l = $("btn-leave"); if (l) l.onclick = leave;
+
+  const main = $("main");
+
+  main.oninput = (e) => {
+    const el = e.target;
+    if (el.id === "host-name") setupDraft.name = el.value;
+    if (el.id === "join-name") joinDraft.name = el.value;
+    if (el.id === "join-code") { joinDraft.code = el.value.toUpperCase(); el.value = joinDraft.code; }
+  };
+
+  main.onclick = async (e) => {
+    const b = e.target.closest("button");
+    if (!b || b.disabled) return;
+
+    // --- home ---
+    if (b.id === "s-minus" || b.id === "s-plus") {
+      setupDraft.seats = Math.max(2, Math.min(8, setupDraft.seats + (b.id === "s-plus" ? 1 : -1)));
+      setupDraft.rounds = null;
+      return render();
+    }
+    if (b.id === "r-minus" || b.id === "r-plus") {
+      const cur = setupDraft.rounds ?? (ROUNDS_FOR[setupDraft.seats] || 15);
+      setupDraft.rounds = Math.max(1, Math.min(20, cur + (b.id === "r-plus" ? 1 : -1)));
+      return render();
+    }
+    if (b.id === "do-create") return create();
+    if (b.id === "do-join")  return join();
+
+    // --- lobby ---
+    if (b.id === "copy-link") {
+      const link = `${location.origin}/g/${game.code}`;
+      try { await navigator.clipboard.writeText(link); toast("Link copied"); }
+      catch { toast(link); }
+      return;
+    }
+    if (b.id === "share-link") {
+      try { await navigator.share({ title:"Wizard", text:`Join my Wizard game — code ${game.code}`, url:`${location.origin}/g/${game.code}` }); } catch {}
+      return;
+    }
+    if (b.id === "do-start") return act({ action:"start" });
+
+    // --- play ---
+    if (b.dataset.mybid !== undefined) {
+      const v = Number(b.dataset.mybid);
+      if (myBid() === v) return act({ action:"clearBid", idx: game.youIdx });
+      return act({ action:"bid", idx: game.youIdx, value: v });
+    }
+    if (b.dataset.forbid !== undefined) return act({ action:"bid", idx:Number(b.dataset.idx), value:Number(b.dataset.forbid) });
+    if (b.dataset.trick !== undefined) return act({ action:"setTrick", idx:Number(b.dataset.idx), value:Number(b.dataset.trick) });
+    if (b.dataset.trump) return act({ action:"trump", trump: game.trump === b.dataset.trump ? null : b.dataset.trump });
+    if (b.id === "to-tricks")  return act({ action:"toTricks" });
+    if (b.id === "back-bids")  return act({ action:"backToBids" });
+    if (b.id === "do-score")   return act({ action:"score" });
+    if (b.id === "do-undo")    return act({ action:"undo" });
+    if (b.id === "do-rematch") return act({ action:"rematch" });
+    if (b.id === "btn-table-2") return openTable();
+  };
+}
+
+async function act(body){
+  if (!session) return;
+  const data = await api({ ...body, code: session.code, hostKey: session.hostKey, seatKey: session.seatKey });
+  if (data) { etag = null; adopt({ game: data.game }); poll(); }
+}
+
+async function create(){
+  const data = await api({
+    action:"create",
+    name: setupDraft.name,
+    seatCount: setupDraft.seats,
+    ...(setupDraft.rounds === null ? {} : { rounds: setupDraft.rounds }),
+  });
+  if (!data) return;
+  saveSession({ code:data.code, hostKey:data.hostKey, seatKey:data.seatKey, seatIdx:data.seatIdx });
+  etag = null; adopt({ game:data.game });
+  history.replaceState(null, "", `/g/${data.code}`);
+  startPolling();
+}
+
+async function join(){
+  const code = (joinDraft.code || "").trim().toUpperCase();
+  if (code.length !== 4) return toast("A game code is four letters.");
+  const data = await api({ action:"join", code, name: joinDraft.name });
+  if (!data) return;
+  saveSession({ code, seatKey:data.seatKey, seatIdx:data.seatIdx });
+  etag = null; adopt({ game:data.game });
+  history.replaceState(null, "", `/g/${code}`);
+  startPolling();
+}
+
+function leave(){
+  saveSession(null);
+  game = null; etag = null; prevTotals = null;
+  history.replaceState(null, "", "/");
+  render();
+}
+
+function animateTotals(){
+  if (!prevTotals) return;
+  if (window.matchMedia && matchMedia("(prefers-reduced-motion: reduce)").matches) return;
+  document.querySelectorAll("[data-score-for]").forEach((node) => {
+    const to = +node.dataset.value;
+    const from = prevTotals[+node.dataset.scoreFor];
+    if (typeof from !== "number" || from === to) return;
+    node.classList.add("flash");
+    const t0 = performance.now(), dur = 520;
+    const step = (now) => {
+      const p = Math.min(1, (now - t0) / dur);
+      const e = 1 - Math.pow(1 - p, 3);
+      node.textContent = Math.round(from + (to - from) * e);
+      if (p < 1) requestAnimationFrame(step); else node.textContent = to;
+    };
+    requestAnimationFrame(step);
+  });
+  prevTotals = null;
+}
+
+/* ------------------------------ overlays ------------------------------ */
+function openTable(){
+  const rows = standings();
+  const size = rows.length <= 4 ? "clamp(3.2rem, 17vw, 6rem)" : "clamp(2.4rem, 13vw, 4.5rem)";
+  const list = rows.map((r) => `<div class="big-row${r.rank===1?" leader":""}">
+      <span class="big-rank num">${r.rank}</span>
+      <span class="big-name">${esc(r.name)}</span>
+      <span class="big-score num">${r.total}</span>
+    </div>`).join("");
+  const foot = game.status === "done"
+    ? `Final scores after ${game.rounds} rounds`
+    : `After round ${game.history.length} of ${game.rounds}`;
+  const o = $("overlay-table");
+  o.style.setProperty("--big-size", size);
+  o.innerHTML = `<div class="overlay-head"><h2>Scores</h2>
+      <button class="close-btn" id="close-table" aria-label="Close">✕</button></div>
+    <div class="big-list">${list}</div><div class="overlay-foot">${esc(foot)}</div>`;
+  o.hidden = false;
+  $("close-table").onclick = () => { o.hidden = true; };
+}
+
+function openRules(){
+  const o = $("overlay-rules");
+  o.innerHTML = `<div class="overlay-head"><h2>How Wizard scores</h2>
+      <button class="close-btn" id="close-rules" aria-label="Close">✕</button></div>
+    <div class="prose">
+      <h3>The bet</h3>
+      <p>Before a round is played, every player calls exactly how many tricks they expect to take. Bidding starts to the dealer's left; the dealer bids last.</p>
+      <h3>The payout</h3>
+      <ul>
+        <li><b>Hit your bid exactly:</b> <span class="rule-eq">20 + 10 × tricks bid</span>. A bid of 0 made is worth 20; a bid of 3 made is worth 50.</li>
+        <li><b>Miss it:</b> <span class="rule-eq">−10 per trick off</span>, over or under.</li>
+      </ul>
+      <h3>The deal</h3>
+      <p>Round 1 deals one card each and every round adds one, until the 60-card deck runs out — 20 rounds for three players, 15 for four, 12 for five, 10 for six. The deal moves one seat left each round.</p>
+      <h3>Around the table</h3>
+      <ul>
+        <li>Everyone bids on their own phone. Bids show up for the whole table as they land, the way they do when you call them out loud.</li>
+        <li>The <b>scorekeeper</b> — whoever started the game — sets trump, closes bidding, enters the tricks taken and scores the round.</li>
+        <li>Tricks taken must total the cards dealt, so a round won't score until they do.</li>
+        <li>Someone's phone died? The scorekeeper can enter a bid for them.</li>
+        <li><b>Scores</b> fills the screen with names and totals — hold it up so the whole table can read it.</li>
+      </ul>
+    </div>`;
+  o.hidden = false;
+  $("close-rules").onclick = () => { o.hidden = true; };
+}
+
+document.addEventListener("keydown", (e) => {
+  if (e.key !== "Escape") return;
+  $("overlay-table").hidden = true;
+  $("overlay-rules").hidden = true;
+});
+
+/* ------------------------------ boot ------------------------------ */
+(function boot(){
+  const fromPath = location.pathname.match(/^\/g\/([A-Za-z0-9]{4})$/);
+  const fromQuery = new URLSearchParams(location.search).get("g");
+  const deepCode = (fromPath ? fromPath[1] : fromQuery || "").toUpperCase();
+
+  session = loadSession();
+  if (deepCode && (!session || session.code !== deepCode)) {
+    // Arriving on someone else's invite: drop a stale session and prefill.
+    session = null;
+    joinDraft.code = deepCode;
+  }
+  render();
+  if (session) { startPolling(); poll(); }
+})();
+</script>
+</body>
+</html>
