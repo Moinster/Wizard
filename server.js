@@ -1,16 +1,19 @@
-// Local dev server: serves public/ and runs the same API handler against an
-// in-memory store, so the whole app can be driven without Vercel or Blob.
-//   node test/dev-server.mjs [port]
+// The game server. Serves public/ and runs the API against an in-memory store,
+// so a game night needs nothing but Node and a Wi-Fi network -- no database,
+// no accounts, no internet. Games live in memory and vanish when it stops.
+//
+//   node server.js [port]
 import { createServer } from "node:http";
+import { networkInterfaces } from "node:os";
 import { readFile } from "node:fs/promises";
 import { fileURLToPath } from "node:url";
 import { dirname, join, extname } from "node:path";
-import { memoryStore } from "../lib/store.js";
-import { handleGet, handlePost, sanitize } from "../lib/handler.js";
+import { memoryStore } from "./lib/store.js";
+import { handleGet, handlePost, sanitize } from "./lib/handler.js";
 
-const root = join(dirname(fileURLToPath(import.meta.url)), "..", "public");
+const root = join(dirname(fileURLToPath(import.meta.url)), "public");
 const store = memoryStore();
-const TYPES = { ".html":"text/html; charset=utf-8", ".js":"text/javascript", ".css":"text/css", ".json":"application/json" };
+const TYPES = { ".html":"text/html; charset=utf-8", ".js":"text/javascript; charset=utf-8", ".css":"text/css", ".json":"application/json", ".svg":"image/svg+xml" };
 
 const server = createServer(async (req, res) => {
   const url = new URL(req.url, "http://localhost");
@@ -51,5 +54,19 @@ const server = createServer(async (req, res) => {
   }
 });
 
+/** Every non-internal IPv4 address, so phones on the same Wi-Fi get a URL. */
+function lanAddresses() {
+  return Object.values(networkInterfaces()).flat()
+    .filter((i) => i && i.family === "IPv4" && !i.internal)
+    .map((i) => i.address);
+}
+
 const port = Number(process.argv[2]) || 3000;
-server.listen(port, () => console.log(`wizard dev server on http://localhost:${port}`));
+// Bind every interface, not just loopback, or nothing else on the Wi-Fi can reach it.
+server.listen(port, "0.0.0.0", () => {
+  console.log(`\n  Wizard Scorekeeper\n`);
+  console.log(`  this computer   http://localhost:${port}`);
+  for (const ip of lanAddresses()) console.log(`  other phones    http://${ip}:${port}`);
+  if (!lanAddresses().length) console.log("  (no network interface found \u2014 other devices can't reach this)");
+  console.log(`\n  Games live in memory: stopping the server clears them.\n`);
+});

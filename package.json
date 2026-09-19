@@ -4,12 +4,13 @@
   "private": true,
   "type": "module",
   "description": "Multi-phone scorekeeper for the card game Wizard",
+  "main": "server.js",
   "scripts": {
-    "dev": "node test/dev-server.mjs",
-    "test": "node test/run.mjs",
+    "start": "node server.js",
+    "test": "node test/run.mjs && node test/qr.mjs",
     "test:browser": "node test/browser.mjs"
   },
-  "dependencies": {
-    "@vercel/blob": "^0.27.0"
+  "devDependencies": {
+    "playwright": "^1.47.0"
   }
 }

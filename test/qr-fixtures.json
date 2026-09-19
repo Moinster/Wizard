@@ -1,0 +1,137 @@
+{
+  "hx31": {
+    "text": "http://192.168.1.37:3000/g/ABCD",
+    "size": 29,
+    "auto": 1,
+    "masks": {
+      "0": "98afc7507ad6442e",
+      "1": "3547295c461b4472",
+      "2": "7ea5cf98e0e89a79",
+      "3": "3228234cde83d900",
+      "4": "8bdca6a9bc44cf68",
+      "5": "0d587b088cc6fa69",
+      "6": "1ec1ac55dcc15158",
+      "7": "d1497a9144692899"
+    }
+  },
+  "hx27": {
+    "text": "http://10.0.0.2:3000/g/WZRD",
+    "size": 29,
+    "auto": 2,
+    "masks": {
+      "0": "96a5a9d3369d0644",
+      "1": "700c23cb0f89a654",
+      "2": "1343f7e66fda2f46",
+      "3": "6f9d18d075c2a64f",
+      "4": "5294d2887f3ac675",
+      "5": "3dd772119fd312a0",
+      "6": "12b121227d2c0040",
+      "7": "4d60cd446f6bf0ed"
+    }
+  },
+  "hx28": {
+    "text": "http://localhost:3000/g/9XKQ",
+    "size": 29,
+    "auto": 2,
+    "masks": {
+      "0": "3305d7a7b8f01181",
+      "1": "535aa1dc388fee7e",
+      "2": "877733eb87193ee4",
+      "3": "33502e8df65d92ae",
+      "4": "5f01e753ffd37e62",
+      "5": "cbb6203252006996",
+      "6": "bb55c386a5ccc32e",
+      "7": "ed07d4aa97292f21"
+    }
+  },
+  "A": {
+    "text": "A",
+    "size": 21,
+    "auto": 3,
+    "masks": {
+      "0": "3f594cfc1843904d",
+      "1": "b13656d3f3aedff5",
+      "2": "e7897faf8824acb3",
+      "3": "2092585037e9da56",
+      "4": "8e0f600c0a22ae37",
+      "5": "508b70347f197279",
+      "6": "59df51b0ccc995ff",
+      "7": "54c30e10497d65da"
+    }
+  },
+  "xx100": {
+    "text": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+    "size": 41,
+    "auto": 0,
+    "masks": {
+      "0": "3b1cbac996b5a950",
+      "1": "b2fed17f60f379c4",
+      "2": "afcc1699fad47e0e",
+      "3": "4b072c2a5685090e",
+      "4": "7dadc2326a0161ad",
+      "5": "93713b3b57e4ff37",
+      "6": "365e54874882211d",
+      "7": "c735a07bd1f3611a"
+    }
+  },
+  "xx120": {
+    "text": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+    "size": 45,
+    "auto": 2,
+    "masks": {
+      "0": "c883366d439779cb",
+      "1": "2492ae5df1cc9a27",
+      "2": "41c119024543b539",
+      "3": "cf248a6f893fced8",
+      "4": "4a3cec8643c4e1ca",
+      "5": "e143368e30e863ae",
+      "6": "52cc0f05abbf5356",
+      "7": "adb7d723a516872a"
+    }
+  },
+  "xx140": {
+    "text": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+    "size": 49,
+    "auto": 2,
+    "masks": {
+      "0": "a980c9cefd2897e6",
+      "1": "5aea1efcbbd522f5",
+      "2": "05f12f4933b9e09c",
+      "3": "352408aadd573d82",
+      "4": "93c688dcc72ddf7c",
+      "5": "84965ec53d934b78",
+      "6": "0f84b1b89c963a88",
+      "7": "4582d2afbc9ccf21"
+    }
+  },
+  "xx170": {
+    "text": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+    "size": 53,
+    "auto": 0,
+    "masks": {
+      "0": "04d7b96b712e7280",
+      "1": "de410a3240185e01",
+      "2": "cd3662f8394b8748",
+      "3": "bfba0b657befecf7",
+      "4": "95b9346647e8f117",
+      "5": "471bda400e67e91a",
+      "6": "282d86ab81f005ee",
+      "7": "35bab8451b6c4eb6"
+    }
+  },
+  "yx200": {
+    "text": "yyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+    "size": 57,
+    "auto": 1,
+    "masks": {
+      "0": "b8a21d4537ec672c",
+      "1": "313551c2c424adc1",
+      "2": "834903185ce347e6",
+      "3": "e899ce6f02508051",
+      "4": "318bd79f1de34ac7",
+      "5": "76b1db94077a2921",
+      "6": "0a62ab9e47876b46",
+      "7": "82ba420c6d182577"
+    }
+  }
+}

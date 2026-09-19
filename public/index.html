@@ -108,6 +108,10 @@ input.code-input{font-size:1.6rem;font-weight:900;letter-spacing:.3em;text-align
 .code-hero .kicker{font-size:.66rem;text-transform:uppercase;letter-spacing:.16em;font-weight:800;color:var(--ink-3)}
 .code-hero .code{font-weight:900;font-size:clamp(2.8rem,17vw,4.6rem);letter-spacing:.14em;line-height:1.05;color:var(--accent)}
 .code-hero .hint{color:var(--ink-2);font-size:.86rem;margin-top:2px}
+.qr-wrap{display:flex;justify-content:center;margin:14px 0 4px}
+.qr{width:min(220px,62vw);aspect-ratio:1;background:#fff;border-radius:12px;padding:10px;
+  box-shadow:var(--shadow-sm);border:1px solid var(--line)}
+.qr svg{display:block;width:100%;height:100%}
 
 /* ---- scoreboard ---- */
 .board{display:grid;gap:8px}
@@ -269,6 +273,7 @@ table.log tbody tr:last-child{border-bottom:0}
 
 <script type="module">
 "use strict";
+import { qrSvg } from "/qr.js";
 
 const SESSION_KEY = "wizard.session.v1";
 const TRUMPS = [
@@ -472,10 +477,11 @@ function lobbyHTML(){
 
   return `
   <div class="panel">
+    <div class="qr-wrap"><div class="qr">${qrSvg(link, { light:"#ffffff", dark:"#141020" })}</div></div>
     <div class="code-hero">
-      <div class="kicker">Game code</div>
+      <div class="kicker">Point a camera at it, or type the code</div>
       <div class="code num">${esc(game.code)}</div>
-      <div class="hint">Read it out, or send the link.</div>
+      <div class="hint">Everyone needs to be on the same Wi-Fi.</div>
     </div>
     <div class="btn-row" style="margin-top:12px">
       <button class="btn btn-ghost" id="copy-link">Copy link</button>

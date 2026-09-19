@@ -2,8 +2,18 @@
 // through a real game against the dev server. Each context has its own
 // localStorage, so these are three separate "phones".
 import { chromium } from 'playwright';
+import { spawn } from 'node:child_process';
 
-const BASE = process.env.BASE || 'http://localhost:3111';
+const PORT = Number(process.env.PORT) || 3111;
+const BASE = process.env.BASE || `http://localhost:${PORT}`;
+
+// Run a server of our own so the test is self-contained.
+const server = spawn(process.execPath, ['server.js', String(PORT)], { stdio: 'ignore' });
+const stopServer = () => { try { server.kill(); } catch {} };
+process.on('exit', stopServer);
+for (let i = 0; i < 50; i++) {
+  try { await fetch(BASE); break; } catch { await new Promise((r) => setTimeout(r, 100)); }
+}
 const EXEC = '/opt/pw-browsers/chromium-1194/chrome-linux/chrome';
 let pass = 0; const fails = [];
 const check = (name, got, want) => {
@@ -120,4 +130,5 @@ check('scores overlay sorted desc', await p3.$$eval('.big-score', (e) => e.map((
 console.log(`${pass} passed, ${fails.length} failed`);
 if (fails.length) console.log('\n' + fails.join('\n'));
 await b.close();
+stopServer();
 process.exit(fails.length ? 1 : 0);
