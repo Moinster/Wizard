@@ -137,8 +137,9 @@ npm run test:browser   # real browsers, both modes (needs playwright)
   round scored with no server, no broken asset paths, and a reload keeping the
   game.
 
-CI runs the dependency-free tests on every push and publishes `public/` to Pages
-if they pass. The browser tests need Playwright and are run locally.
+CI runs the dependency-free tests on every push and pull request — they need
+no `npm install` — and publishes `public/` to Pages when `main` passes. The
+browser tests need Playwright and are run locally.
 
 Not covered: real iOS/Android devices, and player counts other than three
 or four.
