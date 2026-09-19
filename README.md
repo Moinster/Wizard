@@ -1,17 +1,26 @@
 # Wizard Scorekeeper
 
-Scorekeeping for the trick-taking card game **Wizard**, for a table playing in
-the same room — with everyone on their own phone.
+Scorekeeping for the trick-taking card game **Wizard**.
 
-One person runs the server, everyone else scans a QR code. Each player
-**places their own bid from their own phone**; the scorekeeper sets trump,
-closes bidding, counts the tricks and scores the round. Every phone shows every
-player's running total, updated the moment a round is scored.
+It runs two ways off the same code, and works out which one it's in by itself:
 
-No accounts, no database, no internet. Nothing is stored anywhere: the game
-lives in the server's memory and is gone when you stop it.
+| | How to run it | What you get |
+|---|---|---|
+| **One device** | Open the [web page](https://moinster.github.io/Wizard/) | The scorekeeper's phone takes every bid and every trick. Nothing leaves the device. |
+| **Every phone** | `node server.js` on the Wi-Fi | Each player bids from their own phone; everyone sees every score update live. |
 
-## Game night
+No accounts, no database, no sign-up either way.
+
+## One device — the web page
+
+<https://moinster.github.io/Wizard/>
+
+Name the table, then take the bids and the tricks round by round. The game is
+kept in the browser's own storage, so closing the tab doesn't lose it, and
+nothing is ever sent anywhere. This is all a static host can do — there's no
+server behind that URL to pass bids between phones.
+
+## Every phone — a server on your Wi-Fi
 
 On a laptop on the same Wi-Fi as everyone's phones:
 
@@ -37,7 +46,7 @@ Anyone who'd rather type gets a four-letter code instead.
 
 Pass a port as an argument if 3000 is busy: `node server.js 8080`.
 
-## How a game runs
+### How a game runs
 
 1. **Start** — the scorekeeper picks the number of seats and rounds, and gets a
    QR code and a four-letter game code.
@@ -60,16 +69,27 @@ four, 12 for five, 10 for six.
 ## Layout
 
 ```
-server.js           the server: static files plus the API, state in memory
-public/index.html   the whole client: one file, no build step, no framework
-public/qr.js        QR encoder (byte mode, level M, versions 1-10)
-lib/game.js         Wizard rules and state transitions (pure, no I/O)
-lib/handler.js      API actions, permissions, read-modify-write retry loop
-lib/store.js        the store, behind a three-call interface
-test/run.mjs        server logic, permissions, concurrency
-test/qr.mjs         QR conformance against golden fixtures
-test/browser.mjs    three real browser contexts playing a game together
+server.js               the server: static files plus the API, state in memory
+public/index.html       markup and styles
+public/app.js           the client
+public/qr.js            QR encoder (byte mode, level M, versions 1-10)
+public/lib/game.js      Wizard rules and state transitions (pure, no I/O)
+public/lib/handler.js   API actions, permissions, read-modify-write retry loop
+public/lib/store.js     the store, behind a three-call interface
+.github/workflows/      tests, then publish public/ to Pages
 ```
+
+Everything the browser needs lives under `public/`, which is exactly what gets
+published to Pages. The server imports the same `lib/` files the browser does.
+
+### One codebase, two modes
+
+On load the client asks for `/api/health`. A reply means there's a server, so
+bids and scores go through it. A 404 means it's on a static host, so it loads
+`lib/handler.js` and `lib/store.js` into the page and runs the same game logic
+against the browser's own storage. Identical rules, identical scoring, identical
+validation — the only difference is where the state lives and how many devices
+can see it.
 
 ### Why there's a version tag on every write
 
@@ -79,9 +99,8 @@ and writes back only if that tag still holds; the loser of a race is rejected
 and retried against fresh state, so both bids land. Clients poll with the same
 tag, so an idle poll transfers nothing until something actually changes.
 
-`lib/store.js` is the only file that knows where state lives. Swapping the
-in-memory map for something durable means implementing `read`, `etag` and
-`write` against it — nothing above that file changes.
+`lib/store.js` is the only file that knows where state lives. Swapping in
+something durable means implementing `read`, `etag` and `write` against it.
 
 ### Who is allowed to do what
 
@@ -97,29 +116,30 @@ the code can join an open seat, and the server has no authentication of its own
 ## Tests
 
 ```bash
-npm test               # server logic and QR conformance, no dependencies
-npm run test:browser   # three browser "phones" playing a game (needs playwright)
+npm test               # game logic and QR conformance, no dependencies
+npm run test:browser   # real browsers, both modes (needs playwright)
 ```
 
 - **`test/run.mjs`** — 43 checks: the scoring rule, the full round cycle,
   permissions (a player can't start the game, score, or bid for someone else),
   tricks that don't total the cards dealt, undo, end of game, cheap polling, and
   two concurrency races — four phones bidding at once, three joining at once.
-- **`test/qr.mjs`** — 95 checks against golden fixtures. Those fixtures were
-  generated from output verified module-for-module against the `qrcode` npm
-  package across all 8 mask patterns and versions 1–10, including automatic
-  mask selection. The fixtures are hashes, so the test needs no dependencies.
+- **`test/qr.mjs`** — 95 checks against golden fixtures. Those fixtures came
+  from output verified module-for-module against the `qrcode` npm package across
+  all 8 mask patterns and versions 1–10, including automatic mask selection. The
+  fixtures are hashes, so the test needs no dependencies.
 - **`test/browser.mjs`** — 20 checks driving three separate browser contexts
-  through a real game: joining by deep link, seats filling live, bids crossing
-  between phones, scores landing on every phone at once, and a refresh keeping
-  your seat. It starts its own server.
+  through a real game on a running server: joining by link, seats filling live,
+  bids crossing between phones, scores landing everywhere at once, and a refresh
+  keeping your seat.
+- **`test/static.mjs`** — 13 checks against a static host with no API, mounted
+  under a project subpath the way Pages serves it: the fallback screen, a full
+  round scored with no server, no broken asset paths, and a reload keeping the
+  game.
+
+CI runs the dependency-free tests on every push and pull request — they need
+no `npm install` — and publishes `public/` to Pages when `main` passes. The
+browser tests need Playwright and are run locally.
 
 Not covered: real iOS/Android devices, and player counts other than three
 or four.
-
-## If you ever want it on the internet
-
-The first commit in this repository carries a Vercel deployment path — a
-serverless function and a Vercel Blob store behind the same `lib/store.js`
-interface — which was removed in favour of running locally. `git show` it if
-you want it back; only `lib/store.js` and the entry point differ.

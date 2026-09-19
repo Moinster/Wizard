@@ -8,8 +8,8 @@ import { networkInterfaces } from "node:os";
 import { readFile } from "node:fs/promises";
 import { fileURLToPath } from "node:url";
 import { dirname, join, extname } from "node:path";
-import { memoryStore } from "./lib/store.js";
-import { handleGet, handlePost, sanitize } from "./lib/handler.js";
+import { memoryStore } from "./public/lib/store.js";
+import { handleGet, handlePost, sanitize } from "./public/lib/handler.js";
 
 const root = join(dirname(fileURLToPath(import.meta.url)), "public");
 const store = memoryStore();
@@ -21,6 +21,10 @@ const server = createServer(async (req, res) => {
     res.writeHead(status, { "content-type":"application/json", "cache-control":"no-store" });
     res.end(JSON.stringify(obj));
   };
+
+  if (url.pathname === "/api/health") {
+    return send(200, { ok: true, server: "wizard" });
+  }
 
   if (url.pathname === "/api/game") {
     try {
@@ -43,7 +47,13 @@ const server = createServer(async (req, res) => {
     }
   }
 
-  const file = url.pathname === "/" || url.pathname.startsWith("/g/") ? "/index.html" : url.pathname;
+  const deepLink = url.pathname.match(/^\/g\/([A-Za-z0-9]{4})\/?$/);
+  if (deepLink) {
+    res.writeHead(302, { location: `/?g=${deepLink[1].toUpperCase()}` });
+    return res.end();
+  }
+
+  const file = url.pathname === "/" ? "/index.html" : url.pathname;
   try {
     const body = await readFile(join(root, file));
     res.writeHead(200, { "content-type": TYPES[extname(file)] || "application/octet-stream", "cache-control":"no-store" });

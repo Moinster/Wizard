@@ -1,8 +1,8 @@
 // Drives the real API handler against the in-memory store: a full game, the
 // permission rules, and the concurrency path.
-import { memoryStore } from "../lib/store.js";
-import { handleGet, handlePost } from "../lib/handler.js";
-import { scoreFor } from "../lib/game.js";
+import { memoryStore } from "../public/lib/store.js";
+import { handleGet, handlePost } from "../public/lib/handler.js";
+import { scoreFor } from "../public/lib/game.js";
 
 let pass = 0; const fails = [];
 const eq = (name, got, want) => {
