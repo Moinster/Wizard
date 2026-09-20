@@ -117,6 +117,19 @@ against the browser's own storage. Identical rules, identical scoring, identical
 validation — the only difference is where the state lives and how many devices
 can see it.
 
+### Reading a blob without reading the past
+
+Blob content is served through a CDN. Fetching the blob's URL can therefore
+return a body from before the last write, while `head()` reports the new etag,
+because that comes from the control API instead. Pairing the two hands a caller
+a current version tag beside stale state — so it stores that tag, its next poll
+answers "unchanged", and it stops asking. That was worth anywhere up to a minute
+of apparent lag.
+
+Reads pass `cache=0`, the documented way to read from origin, and key the URL on
+the version as well so no store can serve one version's body under another
+version's URL.
+
 ### Why there's a version tag on every write
 
 Two phones bidding at the same instant are two overlapping requests in one

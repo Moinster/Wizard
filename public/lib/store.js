@@ -97,7 +97,7 @@ export function blobStore() {
       } catch {
         return null; // BlobNotFoundError, and anything else that means "no game"
       }
-      const res = await fetch(meta.url, { cache: "no-store" });
+      const res = await fetch(freshBlobUrl(meta), { cache: "no-store" });
       if (!res.ok) return null;
       return { data: await res.json(), etag: meta.etag ?? null };
     },
@@ -130,6 +130,24 @@ export function blobStore() {
       }
     },
   };
+}
+
+/**
+ * Blob content is served through the CDN, so a plain fetch of `meta.url` can
+ * hand back a copy from before the last write -- while `head()` reports the
+ * new etag, because that comes from the control API. The pair is poison: the
+ * caller stores a current etag beside stale state and then believes it is up
+ * to date until something else changes.
+ *
+ * `cache=0` is the documented way to read from origin instead. Keying the URL
+ * on the version as well means that even a store that ignores it cannot serve
+ * one version's body under another version's URL.
+ */
+export function freshBlobUrl(meta) {
+  const url = new URL(meta.url);
+  url.searchParams.set("cache", "0");
+  if (meta.etag) url.searchParams.set("v", meta.etag);
+  return url.toString();
 }
 
 function isConflict(err) {

@@ -128,8 +128,8 @@ async function poll(){
     if (res.status === 404) { toast("That game is gone."); saveSession(null); game = null; render(); return; }
     const data = await res.json();
     stale = false;
-    if (data.unchanged) return;
-    if (data.game) adopt(data);
+    if (data.unchanged) { quietPolls++; return; }
+    if (data.game) { quietPolls = 0; adopt(data); }
   } catch {
     stale = true;
     updateConn();
@@ -151,14 +151,27 @@ function adopt(data){
   if (scored) animateTotals();
 }
 
+/**
+ * How long to wait before asking again. The lobby stays brisk because that is
+ * where people watch for each other arriving; a table that has gone quiet
+ * eases off, and any change snaps it straight back.
+ */
+let quietPolls = 0;
+function pollGap(){
+  if (document.hidden) return 5000;
+  if (!game) return 2000;
+  if (game.status === "lobby") return 1200;
+  if (game.status === "done") return 3000;
+  return quietPolls >= 10 ? 2500 : 1200;
+}
+
 function startPolling(){
   if (polling || solo) return;
   polling = true;
   const tick = async () => {
     if (!polling) return;
     if (!document.hidden) await poll();
-    const gap = !game ? 2000 : game.status === "playing" ? 1300 : 2600;
-    setTimeout(tick, document.hidden ? 4000 : gap);
+    setTimeout(tick, pollGap());
   };
   tick();
 }

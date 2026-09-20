@@ -158,6 +158,33 @@ check('and the value is not in the payload either', leaked, '{}');
   await slow.close();
 }
 
+// ---- how long a join takes to show up elsewhere ---------------------------
+{
+  // The complaint was joins taking seconds to a minute to appear. Most of that
+  // was a stale CDN read; the rest is the poll gap, so hold the round trip to
+  // something a table would not notice.
+  const watcher = await phone();
+  await watcher.goto(BASE);
+  await watcher.fill('#host-name', 'Watcher');
+  await watcher.click('#do-create');
+  await watcher.waitForSelector('.code-hero .code');
+  const c3 = (await watcher.textContent('.code-hero .code')).trim();
+
+  const joiner = await phone();
+  await joiner.goto(`${BASE}/?g=${c3}`);
+  await joiner.fill('#join-name', 'Latecomer');
+
+  const t0 = Date.now();
+  await joiner.click('#do-join');
+  await watcher.waitForFunction(
+    () => [...document.querySelectorAll('.roster-name')].some((n) => n.textContent.trim() === 'Latecomer'),
+    null, { timeout: 10000 });
+  const elapsed = Date.now() - t0;
+
+  console.log(`    (a join reached the other phone in ${elapsed}ms)`);
+  check('a join reaches another phone inside 3s', elapsed < 3000, true);
+}
+
 console.log(`${pass} passed, ${fails.length} failed`);
 if (fails.length) console.log('\n' + fails.join('\n'));
 await b.close();

@@ -2,7 +2,7 @@
 // secret escapes in a response. The game logic itself is covered by run.mjs;
 // this is the thin layer that only exists on Vercel, so nothing else exercises
 // it and a mistake here would only show up in production.
-import { memoryStore } from "../public/lib/store.js";
+import { memoryStore, freshBlobUrl } from "../public/lib/store.js";
 import { route } from "../api/game.js";
 import health from "../api/health.js";
 
@@ -67,6 +67,24 @@ health({ method: "GET" }, {
 });
 eq("health replies 200", status, 200);
 eq("health says ok, which is what the client checks", payload && payload.ok, true);
+
+// ---- blob reads must not come from the CDN --------------------------------
+{
+  // The CDN would otherwise hand back a body from before the last write while
+  // head() reports the new etag -- a current etag beside stale state, which
+  // makes the caller stop asking. This was worth a minute of lag in practice.
+  const u = new URL(freshBlobUrl({ url: "https://s.public.blob.vercel-storage.com/games/WZRD.json", etag: 'W/"a1b2"' }));
+  eq("the read bypasses the CDN", u.searchParams.get("cache"), "0");
+  eq("and is keyed on the version it expects", u.searchParams.get("v"), 'W/"a1b2"');
+  eq("the path is untouched", u.pathname, "/games/WZRD.json");
+
+  const noEtag = new URL(freshBlobUrl({ url: "https://s.public.blob.vercel-storage.com/games/AAAA.json" }));
+  eq("a store without etags still bypasses the CDN", noEtag.searchParams.get("cache"), "0");
+  ok("and adds no empty version", !noEtag.searchParams.has("v"), "v was set with no etag");
+
+  const existing = new URL(freshBlobUrl({ url: "https://s.public.blob.vercel-storage.com/g.json?x=1", etag: "e1" }));
+  eq("an existing query string survives", existing.searchParams.get("x"), "1");
+}
 
 console.log(`${pass} passed, ${fails.length} failed`);
 if (fails.length) { console.log("\n" + fails.join("\n")); process.exit(1); }
