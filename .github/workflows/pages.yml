@@ -16,8 +16,15 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: '22'
-      # The game logic and QR tests have no dependencies, so there is nothing
-      # to install. The browser tests need Playwright and are run locally.
+      # The logic, QR and adapter suites are dependency-free, but the blob
+      # suite checks @vercel/blob's own type definitions to catch the store
+      # asking for options the installed SDK does not have -- which is how a
+      # version slip silently disabled compare-and-swap in production. That
+      # check is only worth anything if the package is actually here, so CI
+      # installs it. Runtime is unaffected: `node server.js` still needs
+      # nothing installed. Dev dependencies are skipped; the browser tests
+      # need Playwright and are run locally.
+      - run: npm ci --omit=dev
       - run: npm test
 
   deploy:
