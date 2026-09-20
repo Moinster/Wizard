@@ -72,3 +72,76 @@ export function localStorageStore(prefix = "wizard.game.") {
     },
   };
 }
+
+/**
+ * Vercel Blob store, for a serverless deployment where nothing can be held in
+ * process memory. Needs BLOB_READ_WRITE_TOKEN, which Vercel injects once a
+ * Blob store is linked to the project.
+ *
+ * `ifMatch` gives a real compare-and-swap. If the SDK in use doesn't report an
+ * etag, `etag()` returns null and writes fall back to last-writer-wins; the
+ * worst case is a bid that has to be tapped again, never a corrupted game.
+ *
+ * The import is dynamic so this module stays loadable in a browser, where the
+ * client only ever calls localStorageStore and this function is never entered.
+ */
+export function blobStore() {
+  const keyFor = (code) => `games/${code}.json`;
+  return {
+    name: "blob",
+    async read(code) {
+      const { head } = await import("@vercel/blob");
+      let meta;
+      try {
+        meta = await head(keyFor(code));
+      } catch {
+        return null; // BlobNotFoundError, and anything else that means "no game"
+      }
+      const res = await fetch(meta.url, { cache: "no-store" });
+      if (!res.ok) return null;
+      return { data: await res.json(), etag: meta.etag ?? null };
+    },
+    async etag(code) {
+      const { head } = await import("@vercel/blob");
+      try {
+        const meta = await head(keyFor(code));
+        return meta.etag ?? null;
+      } catch {
+        return null;
+      }
+    },
+    async write(code, data, etag) {
+      const { put } = await import("@vercel/blob");
+      try {
+        await put(keyFor(code), JSON.stringify(data), {
+          access: "public",
+          addRandomSuffix: false,
+          allowOverwrite: etag !== null,
+          contentType: "application/json",
+          cacheControlMaxAge: 0,
+          ...(etag ? { ifMatch: etag } : {}),
+        });
+        return { ok: true };
+      } catch (err) {
+        // A precondition failure means another phone wrote first, and the
+        // caller retries. Anything else is a real fault and should surface.
+        if (isConflict(err)) return { ok: false };
+        throw err;
+      }
+    },
+  };
+}
+
+function isConflict(err) {
+  const status = err && (err.status || err.statusCode);
+  if (status === 412 || status === 409) return true;
+  const text = String((err && err.message) || "").toLowerCase();
+  return text.includes("precondition") || text.includes("already exists") || text.includes("conflict");
+}
+
+/** The store a serverless deployment should use, or null if none is configured. */
+export function defaultStore() {
+  return typeof process !== "undefined" && process.env && process.env.BLOB_READ_WRITE_TOKEN
+    ? blobStore()
+    : null;
+}

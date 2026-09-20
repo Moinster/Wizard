@@ -143,3 +143,45 @@ browser tests need Playwright and are run locally.
 
 Not covered: real iOS/Android devices, and player counts other than three
 or four.
+
+## Deploying to Vercel
+
+Vercel runs the API as serverless functions. Each request is a fresh, stateless
+invocation, so a game **cannot** live in process memory the way it does under
+`server.js` — Vercel needs a Blob store to hold games instead. That is the only
+real difference; the rules, scoring and validation are the same files.
+
+```
+api/game.js             serverless function: the HTTP skin over lib/handler.js
+api/health.js           the probe that tells the client a backend exists
+vercel.json             serves public/ statically, redirects the old /g/CODE form
+public/lib/store.js     gains blobStore(), behind the same three-call interface
+```
+
+1. **Import the repository** in Vercel — no framework preset, and nothing to
+   configure. `vercel.json` already points the static site at `public/`.
+2. **Add a Blob store** — in the project, **Storage → Create → Blob**, and
+   connect it to this project. That injects `BLOB_READ_WRITE_TOKEN`
+   automatically; there is nothing else to set.
+3. **Redeploy** so the functions pick the token up.
+
+Without a Blob store connected, `/api/game` returns a clear error saying so
+rather than failing in some confusing way.
+
+### Two things worth knowing
+
+- **`api/health.js` is load-bearing.** The client decides between multi-phone
+  and one-device mode by probing `/api/health`. If that endpoint is missing or
+  failing, a perfectly good deployment will quietly serve the solo version.
+- **Every phone polls about once a second while a game is running.** On Vercel
+  that is a function invocation and a Blob metadata read each time, so a long
+  game with five players is tens of thousands of invocations. Fine for a hobby
+  project; worth knowing before it surprises you on a bill.
+
+Games are stored one JSON blob per game at `games/<CODE>.json`. Blobs are
+public-read but only reachable through the API, and the four-letter code is the
+only handle — fine for a card game score sheet, not a secret store. Finished
+games can be cleared from the Blob dashboard whenever.
+
+If you would rather not run a database at all, `server.js` on any host that runs
+a Node process needs none of this — see the sections above.
