@@ -61,10 +61,36 @@ Pass a port as an argument if 3000 is busy: `node server.js 8080`.
 The scorekeeper can also enter a bid for someone whose phone died, undo the last
 round, and start a rematch with the same table.
 
-**Scoring** is the standard rule: hit your bid exactly for `20 + 10 × bid`, or
-lose `10` per trick over or under. Round 1 deals one card each and every round
-adds one, until the 60-card deck runs out — 20 rounds for three players, 15 for
-four, 12 for five, 10 for six.
+**Scoring** defaults to the standard rule: hit your bid exactly for
+`20 + 10 × bid`, or lose `10` per trick over or under. Round 1 deals one card
+each and every round adds one, until the 60-card deck runs out — 20 rounds for
+three players, 15 for four, 12 for five, 10 for six.
+
+### Before the deal
+
+The scorekeeper sets three things in the lobby, and they hold for the whole game:
+
+- **The seating.** Arrange the list into the order everyone is sitting,
+  clockwise. Play and the deal both follow it.
+- **Who deals first.** The deal moves one seat down the list each round after
+  that, and bidding always begins to the dealer's left — so the dealer bids last.
+- **House rules**, below. Each option explains itself as you tap it, and the
+  full text is under **Rules**.
+
+| Scoring | |
+|---|---|
+| **Standard** | Hit your bid exactly for 20 plus 10 a trick. Miss it and lose 10 for every trick over or under. |
+| **Zero pays the round** | A successful bid of zero pays 10 per card dealt instead of a flat 20 — passing in round 8 is worth 80. |
+| **No minus scores** | Making your bid pays as standard, but missing scores nothing rather than going negative. |
+
+| Bidding | |
+|---|---|
+| **Open bidding** | Bids called in turn from the dealer's left, visible as they land. The dealer bids last. |
+| **Screw the dealer** | Open, except the dealer may not make the bids add up to the tricks available. |
+| **Blind bidding** | Everybody bids at once and nobody sees a bid until the last one is in. |
+
+Blind bidding is enforced on the server: a hidden bid is not in the payload at
+all, so it cannot be read out of the page.
 
 ## Layout
 
@@ -90,6 +116,19 @@ bids and scores go through it. A 404 means it's on a static host, so it loads
 against the browser's own storage. Identical rules, identical scoring, identical
 validation — the only difference is where the state lives and how many devices
 can see it.
+
+### Reading a blob without reading the past
+
+Blob content is served through a CDN. Fetching the blob's URL can therefore
+return a body from before the last write, while `head()` reports the new etag,
+because that comes from the control API instead. Pairing the two hands a caller
+a current version tag beside stale state — so it stores that tag, its next poll
+answers "unchanged", and it stops asking. That was worth anywhere up to a minute
+of apparent lag.
+
+Reads pass `cache=0`, the documented way to read from origin, and key the URL on
+the version as well so no store can serve one version's body under another
+version's URL.
 
 ### Why there's a version tag on every write
 
@@ -128,6 +167,12 @@ npm run test:browser   # real browsers, both modes (needs playwright)
   from output verified module-for-module against the `qrcode` npm package across
   all 8 mask patterns and versions 1–10, including automatic mask selection. The
   fixtures are hashes, so the test needs no dependencies.
+- **`test/lobby.mjs`** — 16 checks over the pre-deal controls: reordering the
+  table, the dealer badge following the person rather than the row, the rules
+  reaching every phone, players being unable to change them, and a blind bid
+  staying out of the payload.
+- **`test/latency.mjs`** — reproduces a reported flicker by delaying the API
+  write in the browser, then asserts a tap is drawn at once and never reverts.
 - **`test/browser.mjs`** — 20 checks driving three separate browser contexts
   through a real game on a running server: joining by link, seats filling live,
   bids crossing between phones, scores landing everywhere at once, and a refresh
@@ -143,3 +188,45 @@ browser tests need Playwright and are run locally.
 
 Not covered: real iOS/Android devices, and player counts other than three
 or four.
+
+## Deploying to Vercel
+
+Vercel runs the API as serverless functions. Each request is a fresh, stateless
+invocation, so a game **cannot** live in process memory the way it does under
+`server.js` — Vercel needs a Blob store to hold games instead. That is the only
+real difference; the rules, scoring and validation are the same files.
+
+```
+api/game.js             serverless function: the HTTP skin over lib/handler.js
+api/health.js           the probe that tells the client a backend exists
+vercel.json             serves public/ statically, redirects the old /g/CODE form
+public/lib/store.js     gains blobStore(), behind the same three-call interface
+```
+
+1. **Import the repository** in Vercel — no framework preset, and nothing to
+   configure. `vercel.json` already points the static site at `public/`.
+2. **Add a Blob store** — in the project, **Storage → Create → Blob**, and
+   connect it to this project. That injects `BLOB_READ_WRITE_TOKEN`
+   automatically; there is nothing else to set.
+3. **Redeploy** so the functions pick the token up.
+
+Without a Blob store connected, `/api/game` returns a clear error saying so
+rather than failing in some confusing way.
+
+### Two things worth knowing
+
+- **`api/health.js` is load-bearing.** The client decides between multi-phone
+  and one-device mode by probing `/api/health`. If that endpoint is missing or
+  failing, a perfectly good deployment will quietly serve the solo version.
+- **Every phone polls about once a second while a game is running.** On Vercel
+  that is a function invocation and a Blob metadata read each time, so a long
+  game with five players is tens of thousands of invocations. Fine for a hobby
+  project; worth knowing before it surprises you on a bill.
+
+Games are stored one JSON blob per game at `games/<CODE>.json`. Blobs are
+public-read but only reachable through the API, and the four-letter code is the
+only handle — fine for a card game score sheet, not a secret store. Finished
+games can be cleared from the Blob dashboard whenever.
+
+If you would rather not run a database at all, `server.js` on any host that runs
+a Node process needs none of this — see the sections above.

@@ -4,6 +4,7 @@
 import {
   ROUNDS_FOR, newGame, publicView, randomCode,
   applyJoin, applyRename, applyStart, applyBid, applyClearBid, applyTrump,
+  applyReorder, applyDealerStart, applySettings,
   applyToTricks, applyBackToBids, applySetTrick, applyScore, applyUndo, applyRematch,
 } from "./game.js";
 
@@ -46,13 +47,12 @@ export async function handleGet(store, { code, etag, hostKey, seatKey }) {
   if (!code) return fail(400, "no_code", "No game code given.");
   code = String(code).toUpperCase();
 
-  // The cheap path: ask only for the version tag, and say nothing changed.
-  if (etag) {
-    const live = await store.etag(code);
-    if (live && live === etag) return { status: 200, body: { unchanged: true, etag: live } };
-  }
-  const current = await store.read(code);
+  // One call. Asking for the tag and then the body was two answers that could
+  // disagree, and they did: a current tag beside a body from before the last
+  // write, which left the phone believing it was up to date.
+  const current = await store.read(code, etag || null);
   if (!current) return fail(404, "no_game", "No game with that code.");
+  if (current.unchanged) return ok({ unchanged: true, etag: current.etag });
   return ok({ etag: current.etag, game: publicView(current.data, { hostKey, seatKey }) });
 }
 
@@ -68,7 +68,7 @@ export async function handlePost(store, body) {
     const hostName = (body.name || "").trim().slice(0, 14) || "Player 1";
     for (let attempt = 0; attempt < 8; attempt++) {
       const candidate = randomCode();
-      const game = newGame({ code: candidate, hostName, seatCount, rounds, roundsAuto });
+      const game = newGame({ code: candidate, hostName, seatCount, rounds, roundsAuto, clientId: body.clientId || null });
       const written = await store.write(candidate, game, null);
       if (written.ok) {
         return ok({
@@ -88,7 +88,7 @@ export async function handlePost(store, body) {
   if (action === "join") {
     let joined = null;
     const res = await mutate(store, code, (g) => {
-      const out = applyJoin(g, { name: body.name });
+      const out = applyJoin(g, { name: body.name, clientId: body.clientId });
       if (out.error) return out;
       joined = out;
       return {};
@@ -117,6 +117,12 @@ export async function handlePost(store, body) {
       return guard((g) => applyRename(g, { idx: Number(body.idx), name: body.name }), { idx: Number(body.idx) });
     case "start":
       return guard((g) => applyStart(g), { hostOnly: true });
+    case "reorder":
+      return guard((g) => applyReorder(g, { order: body.order }), { hostOnly: true });
+    case "dealerStart":
+      return guard((g) => applyDealerStart(g, { idx: Number(body.idx) }), { hostOnly: true });
+    case "settings":
+      return guard((g) => applySettings(g, { scoring: body.scoring, bidding: body.bidding }), { hostOnly: true });
     case "bid":
       return guard((g) => applyBid(g, { idx: Number(body.idx), value: Number(body.value) }), { idx: Number(body.idx) });
     case "clearBid":

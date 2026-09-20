@@ -126,5 +126,162 @@ eq("and land on distinct seats", joins.map((r) => r.body.seatIdx).sort(), [1, 2,
 // ---- unknown game ---------------------------------------------------------
 eq("unknown code is 404", (await get({ code: "ZZZZ" })).status, 404);
 
+
+// ===========================================================================
+// House rules: who deals, the seating, and the scoring and bidding variants.
+// ===========================================================================
+const table = async (seats = 4, rounds = 5, names = ["A", "B", "C", "D"]) => {
+  const made = await post({ action: "create", name: names[0], seatCount: seats, rounds });
+  const t = { code: made.body.code, hostKey: made.body.hostKey, seats: [{ seatKey: made.body.seatKey, idx: 0 }] };
+  for (let i = 1; i < seats; i++) {
+    const j = await post({ action: "join", code: t.code, name: names[i] });
+    t.seats.push({ seatKey: j.body.seatKey, idx: j.body.seatIdx });
+  }
+  return t;
+};
+const viewOf = async (t, who) =>
+  (await get({ code: t.code, hostKey: who ? undefined : t.hostKey, seatKey: who ? who.seatKey : undefined })).body.game;
+
+// ---- choosing the first dealer --------------------------------------------
+{
+  const t = await table(4, 5);
+  eq("dealer defaults to the first seat", (await viewOf(t)).dealer, 0);
+  eq("a player cannot set the dealer",
+    (await post({ action: "dealerStart", code: t.code, seatKey: t.seats[1].seatKey, idx: 2 })).body.error, "host_only");
+  eq("host sets who deals first",
+    (await post({ action: "dealerStart", code: t.code, hostKey: t.hostKey, idx: 2 })).status, 200);
+  await post({ action: "start", code: t.code, hostKey: t.hostKey });
+  const g = await viewOf(t);
+  eq("round 1 deals from the chosen seat", g.dealer, 2);
+  eq("and bidding starts to their left", g.order, [3, 0, 1, 2]);
+  eq("the deal still moves one seat a round", [1, 2, 3, 4, 5].map((r) => (2 + r - 1) % 4), [2, 3, 0, 1, 2]);
+  eq("house rules are closed once dealt",
+    (await post({ action: "dealerStart", code: t.code, hostKey: t.hostKey, idx: 0 })).body.error, "already_started");
+}
+
+// ---- rearranging the table -------------------------------------------------
+{
+  const t = await table(4, 5, ["Ana", "Ben", "Cass", "Dev"]);
+  await post({ action: "dealerStart", code: t.code, hostKey: t.hostKey, idx: 3 });   // Dev deals
+  eq("host rearranges the seating",
+    (await post({ action: "reorder", code: t.code, hostKey: t.hostKey, order: [3, 1, 0, 2] })).status, 200);
+  const g = await viewOf(t);
+  eq("seats follow the new order", g.seats.map((s) => s.name), ["Dev", "Ben", "Ana", "Cass"]);
+  eq("the dealer follows the person, not the seat number", g.dealerStart, 0);
+  eq("a seating that isn't a permutation is refused",
+    (await post({ action: "reorder", code: t.code, hostKey: t.hostKey, order: [0, 0, 1, 2] })).body.error, "bad_order");
+  // Keys must travel with their player, or everyone's phone loses its seat.
+  const dev = t.seats[3];
+  const seen = await viewOf(t, dev);
+  eq("a moved player keeps their seat key", seen.youIdx, 0);
+}
+
+// ---- scoring variants ------------------------------------------------------
+const playRound = async (t, bids, tricks) => {
+  for (const s of t.seats) await post({ action: "bid", code: t.code, seatKey: s.seatKey, idx: s.idx, value: bids[s.idx] });
+  await post({ action: "toTricks", code: t.code, hostKey: t.hostKey });
+  for (const s of t.seats) await post({ action: "setTrick", code: t.code, hostKey: t.hostKey, idx: s.idx, value: tricks[s.idx] });
+  return post({ action: "score", code: t.code, hostKey: t.hostKey });
+};
+
+{
+  // A zero bid that comes off is worth a flat 20 under standard scoring, but
+  // 10 per card dealt under "zero pays the round" -- so the same three rounds
+  // of identical play have to diverge as the hands grow.
+  const threeRounds = async (scoring) => {
+    const t = await table(3, 5, ["A", "B", "C"]);
+    await post({ action: "settings", code: t.code, hostKey: t.hostKey, scoring });
+    await post({ action: "start", code: t.code, hostKey: t.hostKey });
+    await playRound(t, [1, 0, 0], [1, 0, 0]);   // 1 card:  A takes it
+    await playRound(t, [0, 2, 0], [0, 2, 0]);   // 2 cards: B takes both
+    await playRound(t, [0, 3, 0], [0, 3, 0]);   // 3 cards: B takes all
+    return (await viewOf(t)).totals;
+  };
+
+  // A and C pass every round; B bids and makes the lot.
+  //   standard   A 20+20+20 +30(r1 bid 1)     B 20+40+50     C 20+20+20
+  //   zeroScales A 10+20+30 shifted the same way as its zeros grow
+  eq("standard: a made zero is a flat 20 whatever the round",
+    await threeRounds("standard"), [70, 110, 60]);
+  eq("zero pays the round: the same zeros grow with the hand",
+    await threeRounds("zeroScales"), [80, 100, 60]);
+}
+
+{
+  const t = await table(3, 5, ["A", "B", "C"]);
+  await post({ action: "settings", code: t.code, hostKey: t.hostKey, scoring: "noNegative" });
+  await post({ action: "start", code: t.code, hostKey: t.hostKey });
+  await playRound(t, [1, 1, 0], [1, 0, 0]);   // B misses by one
+  eq("no minus scores: a miss is zero, not -10", (await viewOf(t)).totals, [30, 0, 20]);
+  eq("the chosen rules are visible to every phone", (await viewOf(t)).settings.scoring, "noNegative");
+}
+
+// ---- bidding variants ------------------------------------------------------
+{
+  const t = await table(3, 5, ["A", "B", "C"]);
+  await post({ action: "settings", code: t.code, hostKey: t.hostKey, bidding: "screwDealer" });
+  await post({ action: "dealerStart", code: t.code, hostKey: t.hostKey, idx: 0 });
+  await post({ action: "start", code: t.code, hostKey: t.hostKey });
+  // Round 1 deals one card. Seats 1 and 2 bid nothing, so seat 0 (the dealer)
+  // bidding 1 would make the bids add up to the single trick available.
+  await post({ action: "bid", code: t.code, seatKey: t.seats[1].seatKey, idx: 1, value: 0 });
+  await post({ action: "bid", code: t.code, seatKey: t.seats[2].seatKey, idx: 2, value: 0 });
+  const hooked = await post({ action: "bid", code: t.code, seatKey: t.seats[0].seatKey, idx: 0, value: 1 });
+  eq("screw the dealer: the even bid is refused", hooked.body.error, "hooked");
+  eq("and the dealer can still bid the other way",
+    (await post({ action: "bid", code: t.code, seatKey: t.seats[0].seatKey, idx: 0, value: 0 })).status, 200);
+}
+
+{
+  const t = await table(3, 5, ["A", "B", "C"]);
+  await post({ action: "settings", code: t.code, hostKey: t.hostKey, bidding: "blind" });
+  await post({ action: "start", code: t.code, hostKey: t.hostKey });
+  await post({ action: "bid", code: t.code, seatKey: t.seats[0].seatKey, idx: 0, value: 1 });
+  const asB = await viewOf(t, t.seats[1]);
+  eq("blind: another player's bid is not in the payload", asB.bids, {});
+  eq("but you can see that they have bid", asB.bidPlaced, [0]);
+  const asA = await viewOf(t, t.seats[0]);
+  eq("and you can always see your own", asA.bids, { 0: 1 });
+  eq("the host cannot peek either", (await viewOf(t)).bids, {});
+
+  await post({ action: "bid", code: t.code, seatKey: t.seats[1].seatKey, idx: 1, value: 0 });
+  await post({ action: "bid", code: t.code, seatKey: t.seats[2].seatKey, idx: 2, value: 0 });
+  eq("once the last bid lands they all show", (await viewOf(t, t.seats[1])).bids, { 0: 1, 1: 0, 2: 0 });
+}
+
+// ---- joining is idempotent per device --------------------------------------
+{
+  // A slow first tap invites a second one, and a lost response invites a
+  // retry. Neither may cost a seat, or a real player finds the table full.
+  const made = await post({ action: "create", name: "Host", seatCount: 3, clientId: "dev-host" });
+  const code = made.body.code;
+
+  const first = await post({ action: "join", code, name: "Ben", clientId: "dev-ben" });
+  const again = await post({ action: "join", code, name: "Ben", clientId: "dev-ben" });
+  eq("a repeated join succeeds", again.status, 200);
+  eq("and lands on the same seat", again.body.seatIdx, first.body.seatIdx);
+  eq("with the same key, so the phone keeps its seat", again.body.seatKey, first.body.seatKey);
+  eq("it did not consume a second seat",
+    (await get({ code })).body.game.seats.filter((x) => x.joined).length, 2);
+
+  // A different device still gets its own seat.
+  const other = await post({ action: "join", code, name: "Cass", clientId: "dev-cass" });
+  eq("another device gets the next seat", other.body.seatIdx, first.body.seatIdx + 1);
+  eq("and a real table fills up as normal",
+    (await post({ action: "join", code, name: "Dev", clientId: "dev-dev" })).body.error, "full");
+
+  // Re-joining may correct a name typed on the second attempt.
+  await post({ action: "join", code, name: "Benjamin", clientId: "dev-ben" });
+  eq("a retried join can fix the name",
+    (await get({ code })).body.game.seats[first.body.seatIdx].name, "Benjamin");
+  eq("and still no extra seat",
+    (await get({ code })).body.game.seats.filter((x) => x.joined).length, 3);
+
+  // The device id is an identifier for a person's phone; it must not be
+  // readable by the rest of the table.
+  const wire = JSON.stringify((await get({ code })).body.game);
+  okTrue("no device id is exposed to other players", !wire.includes("dev-ben"), "clientId found in the payload");
+}
+
 console.log(`${pass} passed, ${fails.length} failed`);
 if (fails.length) { console.log("\n" + fails.join("\n")); process.exit(1); }

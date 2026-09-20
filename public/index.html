@@ -167,6 +167,19 @@ input.code-input{font-size:1.6rem;font-weight:900;letter-spacing:.3em;text-align
 .roster-row input{flex:1 1 auto;min-width:0;height:44px;padding:0 12px;border-radius:10px;
   border:1px solid var(--line);background:var(--surface-2);font-weight:600}
 .roster-row input:focus{background:var(--surface);border-color:var(--accent)}
+.mini{flex:none;min-width:34px;height:34px;padding:0 8px;border-radius:9px;border:1px solid var(--line);
+  background:var(--surface-2);color:var(--ink-2);font-size:.78rem;font-weight:800;display:grid;place-items:center}
+.mini:hover:not(:disabled){border-color:var(--line-strong);color:var(--ink)}
+.mini:disabled{opacity:.3;cursor:not-allowed}
+
+.opts{display:flex;gap:6px;flex-wrap:wrap}
+.opt{min-height:40px;padding:0 13px;border-radius:10px;border:1px solid var(--line);
+  background:var(--surface-2);color:var(--ink-2);font-size:.84rem;font-weight:700}
+.opt:hover:not(:disabled){border-color:var(--line-strong);color:var(--ink)}
+.opt[aria-pressed="true"]{background:var(--accent);border-color:var(--accent);color:var(--accent-ink)}
+.opt:disabled{opacity:.75;cursor:default}
+.opt-note{margin:8px 0 0;color:var(--ink-2);font-size:.84rem;line-height:1.45;max-width:52ch}
+.opt-note b{color:var(--ink)}
 .badge{font-size:.62rem;font-weight:900;letter-spacing:.08em;text-transform:uppercase;padding:3px 7px;
   border-radius:6px;background:var(--accent-soft);color:var(--accent);flex:none}
 .badge.quiet{background:var(--surface-2);color:var(--ink-3)}
@@ -181,6 +194,9 @@ input.code-input{font-size:1.6rem;font-weight:900;letter-spacing:.3em;text-align
 .entry-head{display:flex;align-items:center;gap:8px;margin-bottom:8px}
 .entry-name{font-weight:800;font-size:1rem;flex:1 1 auto;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 
+/* The sticky bar overlays whatever is behind it once the page scrolls, so
+   the content above needs room to end clear of it. */
+.bar-spacer{flex:none;height:92px}
 .actionbar{position:sticky;bottom:0;z-index:25;padding-top:10px;
   padding-bottom:calc(10px + env(safe-area-inset-bottom,0px));
   background:linear-gradient(transparent, var(--bg) 26%);display:flex;flex-direction:column;gap:7px}
