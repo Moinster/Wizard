@@ -4,6 +4,7 @@
 import {
   ROUNDS_FOR, newGame, publicView, randomCode,
   applyJoin, applyRename, applyStart, applyBid, applyClearBid, applyTrump,
+  applyReorder, applyDealerStart, applySettings,
   applyToTricks, applyBackToBids, applySetTrick, applyScore, applyUndo, applyRematch,
 } from "./game.js";
 
@@ -117,6 +118,12 @@ export async function handlePost(store, body) {
       return guard((g) => applyRename(g, { idx: Number(body.idx), name: body.name }), { idx: Number(body.idx) });
     case "start":
       return guard((g) => applyStart(g), { hostOnly: true });
+    case "reorder":
+      return guard((g) => applyReorder(g, { order: body.order }), { hostOnly: true });
+    case "dealerStart":
+      return guard((g) => applyDealerStart(g, { idx: Number(body.idx) }), { hostOnly: true });
+    case "settings":
+      return guard((g) => applySettings(g, { scoring: body.scoring, bidding: body.bidding }), { hostOnly: true });
     case "bid":
       return guard((g) => applyBid(g, { idx: Number(body.idx), value: Number(body.value) }), { idx: Number(body.idx) });
     case "clearBid":

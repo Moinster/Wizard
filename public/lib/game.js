@@ -7,39 +7,91 @@ export const ROUNDS_FOR = { 3: 20, 4: 15, 5: 12, 6: 10, 7: 8, 8: 7 };
 
 export const TRUMPS = ["S", "H", "D", "C", "N"];
 
+/**
+ * House rules. Each carries the text the page shows beside it, so the server
+ * and the page can never disagree about what an option means.
+ */
+export const SCORING_VARIANTS = [
+  {
+    key: "standard",
+    name: "Standard",
+    blurb: "Hit your bid exactly for 20 plus 10 a trick. Miss it and lose 10 for every trick over or under.",
+  },
+  {
+    key: "zeroScales",
+    name: "Zero pays the round",
+    blurb: "As standard, except a successful bid of zero pays 10 per card dealt instead of a flat 20 \u2014 so passing in round 8 is worth 80. Bidding nothing gets harder to do and better to pull off as the hands grow.",
+  },
+  {
+    key: "noNegative",
+    name: "No minus scores",
+    blurb: "Making your bid pays as standard, but missing it scores nothing at all rather than going negative. Gentler, and it keeps anyone from falling out of the game early.",
+  },
+];
+
+export const BIDDING_VARIANTS = [
+  {
+    key: "open",
+    name: "Open bidding",
+    blurb: "Bids are called in turn, starting to the dealer's left, and everyone sees each one as it lands. The dealer bids last and knows the whole table.",
+  },
+  {
+    key: "screwDealer",
+    name: "Screw the dealer",
+    blurb: "Open bidding, except the dealer may not make the bids add up to the number of tricks. Somebody is always going to miss, and the dealer is stuck choosing who.",
+  },
+  {
+    key: "blind",
+    name: "Blind bidding",
+    blurb: "Everybody bids at once and nobody sees another bid until the last one is in. No reading the table \u2014 and the totals can land anywhere.",
+  },
+];
+
+export const DEFAULT_SETTINGS = { scoring: "standard", bidding: "open" };
+
+const scoringKeys = SCORING_VARIANTS.map((v) => v.key);
+const biddingKeys = BIDDING_VARIANTS.map((v) => v.key);
+
 /** Round n deals n cards to each player. */
 export const cardsFor = (round) => round;
 
 /**
- * Wizard scoring: hit the bid exactly for 20 plus 10 a trick; miss it and
- * lose 10 for every trick over or under.
+ * Wizard scoring. `cards` is how many were dealt that round, which only the
+ * "zero pays the round" variant cares about.
  */
-export function scoreFor(bid, taken) {
-  return bid === taken ? 20 + 10 * bid : -10 * Math.abs(bid - taken);
+export function scoreFor(bid, taken, { scoring = "standard", cards = 0 } = {}) {
+  if (bid === taken) {
+    if (scoring === "zeroScales" && bid === 0) return 10 * cards;
+    return 20 + 10 * bid;
+  }
+  return scoring === "noNegative" ? 0 : -10 * Math.abs(bid - taken);
 }
 
-export function totalsFrom(history, seatCount) {
+export function totalsFrom(history, seatCount, settings = DEFAULT_SETTINGS) {
   const totals = new Array(seatCount).fill(0);
   for (const r of history) {
     for (let i = 0; i < seatCount; i++) {
       const b = r.bids[i], k = r.tricks[i];
-      if (typeof b === "number" && typeof k === "number") totals[i] += scoreFor(b, k);
+      if (typeof b === "number" && typeof k === "number") {
+        totals[i] += scoreFor(b, k, { scoring: settings.scoring, cards: r.cards });
+      }
     }
   }
   return totals;
 }
 
-/** The deal moves one seat left each round. */
-export const dealerFor = (round, seatCount) => (round - 1) % seatCount;
+/** The deal starts wherever the table put it and moves one seat left a round. */
+export const dealerFor = (round, seatCount, dealerStart = 0) =>
+  (dealerStart + round - 1) % seatCount;
 
 /** Bidding starts to the dealer's left; the dealer bids last. */
-export function bidOrder(round, seatCount) {
-  const start = (dealerFor(round, seatCount) + 1) % seatCount;
+export function bidOrder(round, seatCount, dealerStart = 0) {
+  const start = (dealerFor(round, seatCount, dealerStart) + 1) % seatCount;
   return Array.from({ length: seatCount }, (_, i) => (start + i) % seatCount);
 }
 
 export function standings(game) {
-  const totals = totalsFrom(game.history, game.seats.length);
+  const totals = totalsFrom(game.history, game.seats.length, game.settings);
   const rows = game.seats.map((s, i) => ({ idx: i, name: s.name, total: totals[i] }));
   rows.sort((a, b) => b.total - a.total);
   let rank = 0, seen = null;
@@ -79,6 +131,8 @@ export function newGame({ code, hostName, seatCount, rounds, roundsAuto = true }
     status: "lobby",
     rounds,
     roundsAuto,
+    settings: { ...DEFAULT_SETTINGS },
+    dealerStart: 0,
     hostKey: randomKey(),
     seats,
     round: 1,
@@ -108,15 +162,35 @@ export function publicView(game, { hostKey, seatKey } = {}) {
     phase: game.phase,
     trump: game.trump,
     seats: game.seats.map((s) => ({ idx: s.idx, name: s.name, joined: s.joined })),
-    bids: game.bids,
+    bids: visibleBids(game, youIdx),
+    // Who has bid, which stays true even when the values are hidden.
+    bidPlaced: Object.keys(game.bids).map(Number),
     tricks: game.tricks,
     history: game.history,
-    totals: totalsFrom(game.history, game.seats.length),
-    dealer: dealerFor(game.round, game.seats.length),
-    order: bidOrder(game.round, game.seats.length),
+    totals: totalsFrom(game.history, game.seats.length, game.settings),
+    dealer: dealerFor(game.round, game.seats.length, game.dealerStart),
+    order: bidOrder(game.round, game.seats.length, game.dealerStart),
+    settings: game.settings,
+    dealerStart: game.dealerStart,
     isHost,
     youIdx,
   };
+}
+
+/**
+ * Blind bidding has to be enforced here, not in the page: a value merely
+ * hidden by the client is still sitting in the JSON for anyone who looks.
+ * Once every bid is in, or once the round moves on to tricks, they all show.
+ */
+function visibleBids(game, youIdx) {
+  const hidden =
+    game.settings.bidding === "blind" &&
+    game.phase === "bid" &&
+    Object.keys(game.bids).length !== game.seats.length;
+  if (!hidden) return { ...game.bids };
+  return youIdx !== null && typeof game.bids[youIdx] === "number"
+    ? { [youIdx]: game.bids[youIdx] }
+    : {};
 }
 
 // ---------------------------------------------------------------------------
@@ -140,12 +214,57 @@ export function applyRename(g, { idx, name }) {
   seat.name = (name || "").trim().slice(0, 14) || `Player ${idx + 1}`;
 }
 
+/** Rearrange the table. Seats carry their keys with them as they move. */
+export function applyReorder(g, { order }) {
+  if (g.status !== "lobby") return { error: "already_started", message: "That game has already started." };
+  const joined = g.seats.filter((s) => s.joined).map((s) => s.idx);
+  const ok =
+    Array.isArray(order) &&
+    order.length === joined.length &&
+    new Set(order).size === order.length &&
+    order.every((i) => joined.includes(i));
+  if (!ok) return { error: "bad_order", message: "That isn't a seating for this table." };
+
+  const empties = g.seats.filter((s) => !s.joined);
+  const moved = order.map((oldIdx) => g.seats[oldIdx]);
+  // The dealer is a person, not a position, so follow them to their new seat.
+  const dealerAt = order.indexOf(g.dealerStart);
+  g.seats = [...moved, ...empties].map((s, i) => ({ ...s, idx: i }));
+  g.dealerStart = dealerAt === -1 ? 0 : dealerAt;
+}
+
+/** Choose who deals the first round; it moves one seat left after that. */
+export function applyDealerStart(g, { idx }) {
+  if (g.status !== "lobby") return { error: "already_started", message: "That game has already started." };
+  const seat = g.seats[idx];
+  if (!seat || !seat.joined) return { error: "no_seat", message: "Nobody is sitting there." };
+  g.dealerStart = idx;
+}
+
+/** House rules, fixed before the deal so a game cannot change how it scores. */
+export function applySettings(g, { scoring, bidding }) {
+  if (g.status !== "lobby") return { error: "already_started", message: "House rules are set before the deal." };
+  if (scoring !== undefined) {
+    if (!scoringKeys.includes(scoring)) return { error: "bad_scoring", message: "That isn't a scoring rule." };
+    g.settings.scoring = scoring;
+  }
+  if (bidding !== undefined) {
+    if (!biddingKeys.includes(bidding)) return { error: "bad_bidding", message: "That isn't a bidding rule." };
+    g.settings.bidding = bidding;
+  }
+}
+
 export function applyStart(g) {
   if (g.status !== "lobby") return { error: "already_started", message: "That game has already started." };
   const joined = g.seats.filter((s) => s.joined).length;
   if (joined < 2) return { error: "too_few", message: "At least two players have to join first." };
   // Drop seats nobody claimed so the deal and the scoreboard match the table.
-  g.seats = g.seats.filter((s) => s.joined).map((s, i) => ({ ...s, idx: i }));
+  // Dropping the empty seats renumbers the rest, so the chosen first dealer
+  // has to be found again by who they are rather than where they sat.
+  const kept = g.seats.filter((s) => s.joined);
+  const movedDealer = kept.findIndex((s) => s.idx === g.dealerStart);
+  g.seats = kept.map((s, i) => ({ ...s, idx: i }));
+  g.dealerStart = movedDealer === -1 ? 0 : movedDealer;
   // Re-derive the deal only when the host never named a round count of their
   // own -- dropping an empty seat shouldn't silently rewrite their choice.
   if (g.roundsAuto && ROUNDS_FOR[g.seats.length]) g.rounds = ROUNDS_FOR[g.seats.length];
@@ -164,6 +283,24 @@ export function applyBid(g, { idx, value }) {
   if (!Number.isInteger(value) || value < 0 || value > cards) {
     return { error: "bad_bid", message: `A bid has to be between 0 and ${cards}.` };
   }
+
+  // Screw the dealer: once everyone else has bid, the dealer may not make the
+  // bids add up to the tricks available.
+  if (g.settings.bidding === "screwDealer") {
+    const dealer = dealerFor(g.round, g.seats.length, g.dealerStart);
+    const othersIn = g.seats.every((s) => s.idx === dealer || typeof g.bids[s.idx] === "number");
+    if (idx === dealer && othersIn) {
+      const total = g.seats.reduce(
+        (sum, s) => sum + (s.idx === dealer ? value : g.bids[s.idx]), 0);
+      if (total === cards) {
+        return {
+          error: "hooked",
+          message: `That would make the bids add up to ${cards}. The dealer has to leave it uneven.`,
+        };
+      }
+    }
+  }
+
   g.bids[idx] = value;
 }
 

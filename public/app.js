@@ -1,5 +1,6 @@
 "use strict";
 import { qrSvg } from "./qr.js";
+import { scoreFor, SCORING_VARIANTS, BIDDING_VARIANTS } from "./lib/game.js";
 
 const SESSION_KEY = "wizard.session.v1";
 const TRUMPS = [
@@ -15,7 +16,10 @@ const CROWN = '<svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><
 const $ = (id) => document.getElementById(id);
 const esc = (s) => String(s).replace(/[&<>"']/g, (c) => ({ "&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;" }[c]));
 const signed = (n) => (n > 0 ? "+" : "") + n;
-const scoreFor = (bid, taken) => (bid === taken ? 20 + 10 * bid : -10 * Math.abs(bid - taken));
+/** Older saved games predate house rules; fall back to the standard ones. */
+const rules = () => (game && game.settings) || { scoring: "standard", bidding: "open" };
+const placedBids = () => (game.bidPlaced || Object.keys(game.bids).map(Number));
+const scoreRound = (bid, taken, cards) => scoreFor(bid, taken, { scoring: rules().scoring, cards });
 
 /* ------------------------------ session ------------------------------ */
 let session = null;      // {code, hostKey, seatKey, seatIdx}
@@ -151,7 +155,7 @@ function standings(){
   rows.forEach((r,i) => { if (r.total !== seen) { rank = i+1; seen = r.total; } r.rank = rank; });
   return rows;
 }
-const bidsIn = () => Object.keys(game.bids).length;
+const bidsIn = () => placedBids().length;
 const allBidsIn = () => bidsIn() === game.seats.length;
 const trickSum = () => Object.values(game.tricks).reduce((a,b) => a+b, 0);
 const tricksIn = () => Object.keys(game.tricks).length;
@@ -251,16 +255,55 @@ function homeHTML(){
 }
 
 /* ---- lobby ---- */
+
+/** One rule group: the choices, and what the chosen one does. */
+function optionGroup(label, variants, current, attr, editable){
+  const chosen = variants.find((v) => v.key === current) || variants[0];
+  return `
+    <div class="field">
+      <label>${label}</label>
+      <div class="opts" role="group" aria-label="${label}">
+        ${variants.map((v) => `
+          <button class="opt" data-${attr}="${v.key}" aria-pressed="${current === v.key}"
+            ${editable ? "" : "disabled"}>${esc(v.name)}</button>`).join("")}
+      </div>
+      <p class="opt-note">${esc(chosen.blurb)}</p>
+    </div>`;
+}
+
 function lobbyHTML(){
-  const joined = game.seats.filter((s) => s.joined).length;
+  const seated = game.seats.filter((s) => s.joined);
+  const joined = seated.length;
   const link = `${location.origin}${location.pathname}?g=${game.code}`;
-  const rows = game.seats.map((s) => `
-    <div class="roster-row">
-      <span class="seat-pip ${s.joined?"":"empty"}">${s.idx+1}</span>
-      <span class="roster-name ${s.joined?"":"empty"}">${s.joined ? esc(s.name) : "waiting…"}</span>
+  const host = game.isHost;
+
+  const rows = game.seats.map((s, i) => {
+    if (!s.joined) {
+      return `<div class="roster-row">
+        <span class="seat-pip empty">${i + 1}</span>
+        <span class="roster-name empty">waiting\u2026</span>
+        <span class="badge quiet">Open</span>
+      </div>`;
+    }
+    const deals = s.idx === game.dealerStart;
+    return `<div class="roster-row">
+      <span class="seat-pip">${i + 1}</span>
+      <span class="roster-name">${esc(s.name)}</span>
       ${s.idx === game.youIdx ? '<span class="badge">You</span>' : ""}
-      ${s.joined ? '<span class="badge good">In</span>' : '<span class="badge quiet">Open</span>'}
-    </div>`).join("");
+      ${deals ? '<span class="badge gold">Deals first</span>' : ""}
+      ${host ? `
+        <button class="mini" data-dealer="${s.idx}" ${deals ? "disabled" : ""}
+          aria-label="${esc(s.name)} deals first" title="${esc(s.name)} deals first">Deal</button>
+        <button class="mini" data-move="up" data-idx="${s.idx}" ${i === 0 ? "disabled" : ""}
+          aria-label="Move ${esc(s.name)} earlier">\u2191</button>
+        <button class="mini" data-move="down" data-idx="${s.idx}" ${i >= joined - 1 ? "disabled" : ""}
+          aria-label="Move ${esc(s.name)} later">\u2193</button>` : ""}
+    </div>`;
+  }).join("");
+
+  const orderNote = host
+    ? `Put the list in the order you're sitting, clockwise. Round 1 is dealt by whoever has <b>Deals first</b>, and the deal moves one seat down the list each round.`
+    : `Play goes down this list, clockwise. The deal starts with <b>Deals first</b> and moves one seat each round.`;
 
   return `
   <div class="panel">
@@ -268,7 +311,7 @@ function lobbyHTML(){
     <div class="code-hero">
       <div class="kicker">Point a camera at it, or type the code</div>
       <div class="code num">${esc(game.code)}</div>
-      <div class="hint">Everyone needs to be on the same Wi-Fi.</div>
+      <div class="hint">Anyone with the link can join an open seat.</div>
     </div>
     <div class="btn-row" style="margin-top:12px">
       <button class="btn btn-ghost" id="copy-link">Copy link</button>
@@ -278,13 +321,24 @@ function lobbyHTML(){
   </div>
 
   <div class="panel">
-    <div class="panel-title">${joined} of ${game.seats.length} seats filled</div>
+    <div class="panel-title">${joined} of ${game.seats.length} seats \u00b7 deal order</div>
     <div class="roster">${rows}</div>
+    <p class="opt-note">${orderNote}</p>
   </div>
 
-  ${game.isHost ? `
+  <div class="panel">
+    <div class="panel-title">House rules</div>
+    ${optionGroup("Scoring", SCORING_VARIANTS, rules().scoring, "scoring", host)}
+    ${optionGroup("Bidding", BIDDING_VARIANTS, rules().bidding, "bidding", host)}
+    <p class="opt-note" style="opacity:.75">${host
+      ? "Tap one to read what it does. These are fixed once you deal \u2014 <b>Rules</b> up top has the full text."
+      : "The scorekeeper sets these before the deal. <b>Rules</b> up top has the full text."}</p>
+  </div>
+
+  ${host ? `
+  <div class="bar-spacer"></div>
   <div class="actionbar">
-    <div class="tally"><span class="pill">${joined < 2 ? "At least two players have to join" : `${game.rounds} rounds · ready when you are`}</span></div>
+    <div class="tally"><span class="pill">${joined < 2 ? "At least two players have to join" : `${game.rounds} rounds \u00b7 ready when you are`}</span></div>
     <button class="btn" id="do-start" ${joined < 2 ? "disabled" : ""}>Start the game</button>
     <div class="conn"><span class="led"></span>${stale ? "Reconnecting" : "Live"}</div>
   </div>` : `
@@ -307,7 +361,7 @@ function boardHTML(){
     const lead = row.rank === 1 && row.total > 0;
     let d = "", cls = "blank";
     if (last && typeof last.bids[s.idx] === "number") {
-      const v = scoreFor(last.bids[s.idx], last.tricks[s.idx]);
+      const v = scoreRound(last.bids[s.idx], last.tricks[s.idx], last.cards);
       d = signed(v); cls = v >= 0 ? "up" : "down";
     }
     return `<div class="tile${lead?" leader":""}${s.idx===game.youIdx?" you":""}">
@@ -350,11 +404,14 @@ function roundHTML(){
     const s = game.seats[idx];
     const b = game.bids[idx];
     const has = typeof b === "number";
+    const placed = placedBids().includes(idx);
     const tags = [];
     if (idx === game.dealer) tags.push('<span class="badge quiet">Dealer</span>');
     if (idx === game.youIdx) tags.push('<span class="badge">You</span>');
     let right;
-    if (isBid) right = `<span class="bid-chip ${has?"in":""}">${has ? b : "–"}</span>`;
+    // Under blind bidding the value is withheld until the last bid lands, so
+    // a tick stands in for "they have bid, you just can't see what".
+    if (isBid) right = `<span class="bid-chip ${placed?"in":""}">${has ? b : (placed ? "\u2713" : "\u2013")}</span>`;
     else {
       const k = game.tricks[idx];
       const hit = typeof k === "number" && k === b;
@@ -443,7 +500,10 @@ function roundHTML(){
       .sort((a, b) => (a === game.youIdx ? -1 : b === game.youIdx ? 1 : 0))
       .map((i) => (i === game.youIdx ? "you" : game.seats[i].name));
     const hookDiff = Object.values(game.bids).reduce((a,b)=>a+b,0) - cards;
-    const status = solo && !allBidsIn()
+    const blindPending = rules().bidding === "blind" && !allBidsIn();
+    const status = blindPending
+      ? `Bids are hidden \u2014 ${bidsIn()} of ${game.seats.length} in`
+      : solo && !allBidsIn()
       ? `${bidsIn()} of ${game.seats.length} bids in`
       : allBidsIn()
       ? (hookDiff === 0
@@ -475,7 +535,7 @@ function roundHTML(){
   // Solo mode already lists every player in its own panels; repeating the
   // roster underneath is just the same names twice.
   const rosterBlock = solo ? "" : `<div class="roster">${roster}</div>`;
-  return `${mine}<div class="panel">${head}${rosterBlock}</div>${fillIn}${hostPanel}${bar}`;
+  return `${mine}<div class="panel">${head}${rosterBlock}</div>${fillIn}${hostPanel}<div class="bar-spacer"></div>${bar}`;
 }
 
 function winnerHTML(){
@@ -498,7 +558,7 @@ function historyHTML(){
   const running = {}; game.seats.forEach((s) => { running[s.idx] = 0; });
   const body = game.history.map((r) => {
     const cells = game.seats.map((s) => {
-      const b = r.bids[s.idx], k = r.tricks[s.idx], v = scoreFor(b, k);
+      const b = r.bids[s.idx], k = r.tricks[s.idx], v = scoreRound(b, k, r.cards);
       running[s.idx] += v;
       return `<td><span class="cell-bid">${b} → ${k}</span><br>
         <span class="cell-delta num ${v>=0?"up":"down"}">${signed(v)}</span></td>`;
@@ -565,6 +625,35 @@ function wire(){
       return;
     }
     if (b.id === "do-start") return act({ action:"start" });
+    if (b.dataset.scoring) {
+      const scoring = b.dataset.scoring;
+      return optimistic((g) => { g.settings = { ...g.settings, scoring }; }, { action:"settings", scoring });
+    }
+    if (b.dataset.bidding) {
+      const bidding = b.dataset.bidding;
+      return optimistic((g) => { g.settings = { ...g.settings, bidding }; }, { action:"settings", bidding });
+    }
+    if (b.dataset.dealer !== undefined) {
+      const idx = Number(b.dataset.dealer);
+      return optimistic((g) => { g.dealerStart = idx; }, { action:"dealerStart", idx });
+    }
+    if (b.dataset.move) {
+      const idx = Number(b.dataset.idx);
+      const order = game.seats.filter((s) => s.joined).map((s) => s.idx);
+      const at = order.indexOf(idx), to = at + (b.dataset.move === "up" ? -1 : 1);
+      if (at < 0 || to < 0 || to >= order.length) return;
+      order.splice(to, 0, order.splice(at, 1)[0]);
+      return optimistic((g) => {
+        // Mirror what the server will do, so the row moves under the thumb.
+        const moved = order.map((old) => g.seats[old]);
+        const empties = g.seats.filter((x) => !x.joined);
+        const dealerAt = order.indexOf(g.dealerStart);
+        const youAt = g.youIdx === null ? -1 : order.indexOf(g.youIdx);
+        g.seats = [...moved, ...empties].map((x, i) => ({ ...x, idx: i }));
+        g.dealerStart = dealerAt === -1 ? 0 : dealerAt;
+        if (youAt !== -1) g.youIdx = youAt;
+      }, { action:"reorder", order });
+    }
 
     // --- play ---
     if (b.dataset.mybid !== undefined) {
@@ -727,6 +816,16 @@ function openRules(){
       </ul>
       <h3>The deal</h3>
       <p>Round 1 deals one card each and every round adds one, until the 60-card deck runs out — 20 rounds for three players, 15 for four, 12 for five, 10 for six. The deal moves one seat left each round.</p>
+      <h3>House rules</h3>
+      <p>The scorekeeper picks these before the deal, and they hold for the whole game. ${game ? "The one in use is marked." : ""}</p>
+      <p><b>Scoring</b></p>
+      <ul>${SCORING_VARIANTS.map((v) => `<li><b>${esc(v.name)}</b>${game && rules().scoring === v.key ? ' <span class="rule-eq">in use</span>' : ""} \u2014 ${esc(v.blurb)}</li>`).join("")}</ul>
+      <p><b>Bidding</b></p>
+      <ul>${BIDDING_VARIANTS.map((v) => `<li><b>${esc(v.name)}</b>${game && rules().bidding === v.key ? ' <span class="rule-eq">in use</span>' : ""} \u2014 ${esc(v.blurb)}</li>`).join("")}</ul>
+
+      <h3>Who deals</h3>
+      <p>Before starting, the scorekeeper arranges the list into the order everyone is sitting and marks who deals the first round. After that the deal moves one seat down the list each round, and bidding always begins to the dealer's left \u2014 so the dealer bids last.</p>
+
       <h3>Around the table</h3>
       <ul>
         <li>Everyone bids on their own phone. Bids show up for the whole table as they land, the way they do when you call them out loud.</li>

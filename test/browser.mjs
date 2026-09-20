@@ -58,7 +58,7 @@ await p3.click('#do-join');
 await p3.waitForSelector('.roster-row');
 
 // the host's lobby should fill in by itself, with no reload
-await host.waitForFunction(() => document.querySelectorAll('.badge.good').length === 3, null, { timeout: 8000 });
+await host.waitForFunction(() => document.querySelectorAll('.roster-name:not(.empty)').length === 3, null, { timeout: 8000 });
 check('host sees all three joined without reloading', await host.$$eval('.roster-name', (e) => e.map((n) => n.textContent.trim())), ['Mira', 'Jonas', 'Priya']);
 check('a player cannot start the game', await p2.$('#do-start'), null);
 

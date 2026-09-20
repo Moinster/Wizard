@@ -61,10 +61,36 @@ Pass a port as an argument if 3000 is busy: `node server.js 8080`.
 The scorekeeper can also enter a bid for someone whose phone died, undo the last
 round, and start a rematch with the same table.
 
-**Scoring** is the standard rule: hit your bid exactly for `20 + 10 × bid`, or
-lose `10` per trick over or under. Round 1 deals one card each and every round
-adds one, until the 60-card deck runs out — 20 rounds for three players, 15 for
-four, 12 for five, 10 for six.
+**Scoring** defaults to the standard rule: hit your bid exactly for
+`20 + 10 × bid`, or lose `10` per trick over or under. Round 1 deals one card
+each and every round adds one, until the 60-card deck runs out — 20 rounds for
+three players, 15 for four, 12 for five, 10 for six.
+
+### Before the deal
+
+The scorekeeper sets three things in the lobby, and they hold for the whole game:
+
+- **The seating.** Arrange the list into the order everyone is sitting,
+  clockwise. Play and the deal both follow it.
+- **Who deals first.** The deal moves one seat down the list each round after
+  that, and bidding always begins to the dealer's left — so the dealer bids last.
+- **House rules**, below. Each option explains itself as you tap it, and the
+  full text is under **Rules**.
+
+| Scoring | |
+|---|---|
+| **Standard** | Hit your bid exactly for 20 plus 10 a trick. Miss it and lose 10 for every trick over or under. |
+| **Zero pays the round** | A successful bid of zero pays 10 per card dealt instead of a flat 20 — passing in round 8 is worth 80. |
+| **No minus scores** | Making your bid pays as standard, but missing scores nothing rather than going negative. |
+
+| Bidding | |
+|---|---|
+| **Open bidding** | Bids called in turn from the dealer's left, visible as they land. The dealer bids last. |
+| **Screw the dealer** | Open, except the dealer may not make the bids add up to the tricks available. |
+| **Blind bidding** | Everybody bids at once and nobody sees a bid until the last one is in. |
+
+Blind bidding is enforced on the server: a hidden bid is not in the payload at
+all, so it cannot be read out of the page.
 
 ## Layout
 
@@ -128,6 +154,12 @@ npm run test:browser   # real browsers, both modes (needs playwright)
   from output verified module-for-module against the `qrcode` npm package across
   all 8 mask patterns and versions 1–10, including automatic mask selection. The
   fixtures are hashes, so the test needs no dependencies.
+- **`test/lobby.mjs`** — 16 checks over the pre-deal controls: reordering the
+  table, the dealer badge following the person rather than the row, the rules
+  reaching every phone, players being unable to change them, and a blind bid
+  staying out of the payload.
+- **`test/latency.mjs`** — reproduces a reported flicker by delaying the API
+  write in the browser, then asserts a tap is drawn at once and never reverts.
 - **`test/browser.mjs`** — 20 checks driving three separate browser contexts
   through a real game on a running server: joining by link, seats filling live,
   bids crossing between phones, scores landing everywhere at once, and a refresh

@@ -58,7 +58,7 @@ await p3.fill('#join-name', 'Priya');
 await p3.click('#do-join');
 await p3.waitForSelector('.roster-row');
 
-await host.waitForFunction(() => document.querySelectorAll('.badge.good').length === 3, null, { timeout: 8000 });
+await host.waitForFunction(() => document.querySelectorAll('.roster-name:not(.empty)').length === 3, null, { timeout: 8000 });
 await host.click('#do-start');
 await me.waitForSelector('.your-turn .chip', { timeout: 8000 });
 
