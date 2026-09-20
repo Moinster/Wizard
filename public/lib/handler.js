@@ -69,7 +69,7 @@ export async function handlePost(store, body) {
     const hostName = (body.name || "").trim().slice(0, 14) || "Player 1";
     for (let attempt = 0; attempt < 8; attempt++) {
       const candidate = randomCode();
-      const game = newGame({ code: candidate, hostName, seatCount, rounds, roundsAuto });
+      const game = newGame({ code: candidate, hostName, seatCount, rounds, roundsAuto, clientId: body.clientId || null });
       const written = await store.write(candidate, game, null);
       if (written.ok) {
         return ok({
@@ -89,7 +89,7 @@ export async function handlePost(store, body) {
   if (action === "join") {
     let joined = null;
     const res = await mutate(store, code, (g) => {
-      const out = applyJoin(g, { name: body.name });
+      const out = applyJoin(g, { name: body.name, clientId: body.clientId });
       if (out.error) return out;
       joined = out;
       return {};

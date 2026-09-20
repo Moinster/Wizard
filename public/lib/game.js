@@ -116,12 +116,13 @@ export function randomKey() {
   return out;
 }
 
-export function newGame({ code, hostName, seatCount, rounds, roundsAuto = true }) {
+export function newGame({ code, hostName, seatCount, rounds, roundsAuto = true, clientId = null }) {
   const seats = Array.from({ length: seatCount }, (_, i) => ({
     idx: i,
     name: i === 0 ? hostName : "",
     key: i === 0 ? randomKey() : null,
     joined: i === 0,
+    clientId: i === 0 ? clientId : null,
   }));
   return {
     code,
@@ -198,13 +199,28 @@ function visibleBids(game, youIdx) {
 // mutation it made to `g`.
 // ---------------------------------------------------------------------------
 
-export function applyJoin(g, { name }) {
+export function applyJoin(g, { name, clientId }) {
   if (g.status !== "lobby") return { error: "already_started", message: "That game has already started." };
+
+  // Joining has to be idempotent per device. A slow first tap invites a second
+  // one, and a lost response invites a retry; either way a device that already
+  // holds a seat gets that seat back rather than burning another and leaving a
+  // real player locked out of a table that looks full.
+  if (clientId) {
+    const mine = g.seats.find((s) => s.joined && s.clientId === clientId);
+    if (mine) {
+      const typed = (name || "").trim().slice(0, 14);
+      if (typed) mine.name = typed;
+      return { seatIdx: mine.idx, seatKey: mine.key, rejoined: true };
+    }
+  }
+
   const seat = g.seats.find((s) => !s.joined);
   if (!seat) return { error: "full", message: "Every seat is taken." };
   seat.joined = true;
   seat.name = (name || "").trim().slice(0, 14) || `Player ${seat.idx + 1}`;
   seat.key = randomKey();
+  seat.clientId = clientId || null;
   return { seatIdx: seat.idx, seatKey: seat.key };
 }
 

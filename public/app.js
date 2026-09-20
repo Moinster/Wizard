@@ -3,6 +3,7 @@ import { qrSvg } from "./qr.js";
 import { scoreFor, SCORING_VARIANTS, BIDDING_VARIANTS } from "./lib/game.js";
 
 const SESSION_KEY = "wizard.session.v1";
+const CLIENT_KEY = "wizard.client.v1";
 const TRUMPS = [
   { k:"S", glyph:"♠", name:"Spades", red:false },
   { k:"H", glyph:"♥", name:"Hearts", red:true },
@@ -33,6 +34,22 @@ let writesInFlight = 0;    // a tap we've drawn locally but the server hasn't co
 let solo = false;          // true when there's no server: the game runs in this browser
 let localApi = null;       // {store, handlePost, handleGet, sanitize} in solo mode
 let joinDraft = { name:"", code:"" };
+
+/**
+ * A stable id for this device, so a retried or double-tapped join lands back
+ * on the seat it already has instead of taking a second one.
+ */
+let fallbackClientId = null;
+function clientId(){
+  const fresh = () => (crypto.randomUUID ? crypto.randomUUID() : `c${Date.now()}${Math.random().toString(36).slice(2)}`);
+  try {
+    let id = localStorage.getItem(CLIENT_KEY);
+    if (!id) { id = fresh(); localStorage.setItem(CLIENT_KEY, id); }
+    return id;
+  } catch {
+    return (fallbackClientId ||= fresh());   // private window: per-tab is still better than none
+  }
+}
 
 function loadSession(){
   try { const raw = localStorage.getItem(SESSION_KEY); if (raw) return JSON.parse(raw); } catch {}
@@ -610,8 +627,8 @@ function wire(){
       setupDraft.rounds = Math.max(1, Math.min(20, cur + (b.id === "r-plus" ? 1 : -1)));
       return render();
     }
-    if (b.id === "do-create") return create();
-    if (b.id === "do-join")  return join();
+    if (b.id === "do-create") return whileBusy("do-create", "Starting\u2026", create);
+    if (b.id === "do-join")  return whileBusy("do-join", "Joining\u2026", join);
 
     // --- lobby ---
     if (b.id === "copy-link") {
@@ -713,6 +730,7 @@ async function create(){
   const data = await api({
     action:"create",
     name: setupDraft.name,
+    clientId: clientId(),
     seatCount: setupDraft.seats,
     ...(setupDraft.rounds === null ? {} : { rounds: setupDraft.rounds }),
   });
@@ -728,7 +746,7 @@ async function createSolo(){
   const names = Array.from({ length: setupDraft.seats }, (_, i) =>
     (setupDraft.names[i] || "").trim() || `Player ${i + 1}`);
   const made = await api({
-    action:"create", name:names[0], seatCount:setupDraft.seats,
+    action:"create", name:names[0], clientId: clientId(), seatCount:setupDraft.seats,
     ...(setupDraft.rounds === null ? {} : { rounds: setupDraft.rounds }),
   });
   if (!made) return;
@@ -743,10 +761,20 @@ async function createSolo(){
   history.replaceState(null, "", `?g=${made.code}`);
 }
 
+/** Hold a button down for the length of its request so a second tap can't fire. */
+async function whileBusy(id, label, run){
+  const btn = $(id);
+  if (btn && btn.disabled) return;
+  const was = btn ? btn.textContent : null;
+  if (btn) { btn.disabled = true; btn.textContent = label; }
+  try { return await run(); }
+  finally { if (btn && btn.isConnected) { btn.disabled = false; btn.textContent = was; } }
+}
+
 async function join(){
   const code = (joinDraft.code || "").trim().toUpperCase();
   if (code.length !== 4) return toast("A game code is four letters.");
-  const data = await api({ action:"join", code, name: joinDraft.name });
+  const data = await api({ action:"join", code, name: joinDraft.name, clientId: clientId() });
   if (!data) return;
   saveSession({ code, seatKey:data.seatKey, seatIdx:data.seatIdx });
   etag = null; adopt({ game:data.game });

@@ -249,5 +249,39 @@ const playRound = async (t, bids, tricks) => {
   eq("once the last bid lands they all show", (await viewOf(t, t.seats[1])).bids, { 0: 1, 1: 0, 2: 0 });
 }
 
+// ---- joining is idempotent per device --------------------------------------
+{
+  // A slow first tap invites a second one, and a lost response invites a
+  // retry. Neither may cost a seat, or a real player finds the table full.
+  const made = await post({ action: "create", name: "Host", seatCount: 3, clientId: "dev-host" });
+  const code = made.body.code;
+
+  const first = await post({ action: "join", code, name: "Ben", clientId: "dev-ben" });
+  const again = await post({ action: "join", code, name: "Ben", clientId: "dev-ben" });
+  eq("a repeated join succeeds", again.status, 200);
+  eq("and lands on the same seat", again.body.seatIdx, first.body.seatIdx);
+  eq("with the same key, so the phone keeps its seat", again.body.seatKey, first.body.seatKey);
+  eq("it did not consume a second seat",
+    (await get({ code })).body.game.seats.filter((x) => x.joined).length, 2);
+
+  // A different device still gets its own seat.
+  const other = await post({ action: "join", code, name: "Cass", clientId: "dev-cass" });
+  eq("another device gets the next seat", other.body.seatIdx, first.body.seatIdx + 1);
+  eq("and a real table fills up as normal",
+    (await post({ action: "join", code, name: "Dev", clientId: "dev-dev" })).body.error, "full");
+
+  // Re-joining may correct a name typed on the second attempt.
+  await post({ action: "join", code, name: "Benjamin", clientId: "dev-ben" });
+  eq("a retried join can fix the name",
+    (await get({ code })).body.game.seats[first.body.seatIdx].name, "Benjamin");
+  eq("and still no extra seat",
+    (await get({ code })).body.game.seats.filter((x) => x.joined).length, 3);
+
+  // The device id is an identifier for a person's phone; it must not be
+  // readable by the rest of the table.
+  const wire = JSON.stringify((await get({ code })).body.game);
+  okTrue("no device id is exposed to other players", !wire.includes("dev-ben"), "clientId found in the payload");
+}
+
 console.log(`${pass} passed, ${fails.length} failed`);
 if (fails.length) { console.log("\n" + fails.join("\n")); process.exit(1); }

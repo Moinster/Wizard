@@ -117,6 +117,47 @@ const leaked = await p3.evaluate(async () => {
 });
 check('and the value is not in the payload either', leaked, '{}');
 
+// ---- an impatient double-tap must not take two seats -----------------------
+{
+  // A cold serverless function makes the first tap look like it did nothing,
+  // so players tap again. That used to burn a second seat and lock someone out.
+  const slow = await b.newContext({ viewport: { width: 390, height: 844 } });
+  const imp = await slow.newPage();
+  await imp.route('**/api/game', async (r) => {
+    if (r.request().method() === 'POST') await new Promise((x) => setTimeout(x, 700));
+    await r.continue();
+  });
+
+  const fresh = await phone();
+  await fresh.goto(BASE);
+  await fresh.fill('#host-name', 'Host');
+  await fresh.click('#s-minus');                     // 3 seats
+  await fresh.click('#do-create');
+  await fresh.waitForSelector('.code-hero .code');
+  const c2 = (await fresh.textContent('.code-hero .code')).trim();
+
+  await imp.goto(`${BASE}/?g=${c2}`);
+  await imp.fill('#join-name', 'Impatient');
+  await imp.evaluate(() => { const el = document.querySelector('#do-join'); el.click(); el.click(); });
+  await imp.waitForSelector('.roster-row', { timeout: 10000 });
+  await imp.waitForTimeout(1800);
+
+  const seated = await fresh.$$eval('.roster-name:not(.empty)', (e) => e.map((n) => n.textContent.trim()));
+  check('a double-tapped join takes exactly one seat', seated, ['Host', 'Impatient']);
+  check('and that phone has a seat of its own',
+    await imp.$$eval('.roster-row', (e) => e.some((r) => /\bYou\b/.test(r.textContent))), true);
+
+  const last = await phone();
+  await last.goto(`${BASE}/?g=${c2}`);
+  await last.fill('#join-name', 'Third');
+  await last.click('#do-join');
+  await last.waitForSelector('.roster-row', { timeout: 10000 });
+  await last.waitForTimeout(600);
+  check('so the next player is not locked out of a full table',
+    await last.$$eval('.roster-row', (e) => e.some((r) => /\bYou\b/.test(r.textContent))), true);
+  await slow.close();
+}
+
 console.log(`${pass} passed, ${fails.length} failed`);
 if (fails.length) console.log('\n' + fails.join('\n'));
 await b.close();
