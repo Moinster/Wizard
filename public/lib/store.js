@@ -128,7 +128,18 @@ export function blobStore(loadBlob = () => import("@vercel/blob")) {
       for (let attempt = 0; attempt < 2; attempt++) {
         try {
           const res = await ask();
-          if (res.statusCode === 304) return { unchanged: true, etag: res.blob.etag };
+          // get() reports an absent blob by RETURNING null, not by throwing --
+          // its signature says so, and missing this is what made a mistyped
+          // join code answer 500 instead of "no game with that code". A throw
+          // is still handled below, in case a later version prefers one.
+          if (!res) return null;
+          if (res.statusCode === 304) {
+            // A 304 carries no body and, in this SDK, sometimes no etag header
+            // either. The caller's tag is the one that matched, so it is the
+            // current one; handing back "" would make the phone drop its tag
+            // and fetch the whole game on every poll.
+            return { unchanged: true, etag: res.blob.etag || ifNoneMatch };
+          }
           const body = await new Response(res.stream).text();
           return { data: JSON.parse(body), etag: res.blob.etag };
         } catch (err) {

@@ -40,7 +40,7 @@ class BlobAlreadyExistsError extends Error {
  * lags `origin` by one write, which is what the real CDN does and what makes
  * dropping useCache:false a test failure rather than a production incident.
  */
-function fakeBlob({ failReads = 0 } = {}) {
+function fakeBlob({ failReads = 0, throwOnMissing = false, etagOn304 = true } = {}) {
   const origin = new Map();   // pathname -> { body, etag }
   const cdn = new Map();
   let seq = 0;
@@ -63,12 +63,18 @@ function fakeBlob({ failReads = 0 } = {}) {
           throw err;
         }
         const live = origin.get(pathname);
-        if (!live) throw new BlobNotFoundError();
+        // The real get() signals an absent blob by RETURNING null. The fake
+        // said it threw, which is why the store's null branch was missing and
+        // a mistyped join code answered 500 in production instead of "no game
+        // with that code". throwOnMissing covers the other shape.
+        if (!live) { if (throwOnMissing) throw new BlobNotFoundError(); return null; }
         // Forgetting useCache:false gets you the copy from before the last
         // write, with the current tag beside it -- the production bug, exactly.
         const served = opts.useCache === false ? live : (cdn.get(pathname) || live);
         if (opts.ifNoneMatch && opts.ifNoneMatch === served.etag) {
-          return { statusCode: 304, stream: null, blob: { etag: served.etag } };
+          // A real 304 reads its etag off the response header, and that header
+          // is not always there -- production returned "".
+          return { statusCode: 304, stream: null, blob: { etag: etagOn304 ? served.etag : "" } };
         }
         return {
           statusCode: 200,
@@ -167,6 +173,39 @@ function fakeBlob({ failReads = 0 } = {}) {
   ok("a read that keeps failing throws, so the API answers 500", threw !== null, "it returned instead");
   ok("and never reports the game missing, which would wipe it off a phone",
     threw !== null && /fetch failed/.test(threw.message), String(threw && threw.message));
+}
+
+// ---- an absent blob, reported either way ----------------------------------
+{
+  // The bug this pair exists for: get() returns null rather than throwing, the
+  // store fell through to res.statusCode on null, and handleGet turned the
+  // TypeError into a 500. A player mistyping a join code then got "something
+  // broke" and a client that retries forever, instead of being told the code
+  // is wrong.
+  const returns = blobStore(async () => fakeBlob().module);
+  eq("a get() that returns null reads as no game", await returns.read("NONE"), null);
+  eq("and the API answers 404, not 500",
+    (await handleGet(returns, { code: "NONE" })).status, 404);
+
+  const throws = blobStore(async () => fakeBlob({ throwOnMissing: true }).module);
+  eq("a get() that throws not-found reads as no game", await throws.read("NONE"), null);
+  eq("and also answers 404", (await handleGet(throws, { code: "NONE" })).status, 404);
+}
+
+// ---- a 304 that carries no etag -------------------------------------------
+{
+  const fake = fakeBlob({ etagOn304: false });
+  const store = blobStore(async () => fake.module);
+  await store.write("GGGG", { v: 1 }, null);
+  const first = await store.read("GGGG");
+
+  const poll = await store.read("GGGG", first.etag);
+  eq("an etag-less 304 still reports unchanged", poll.unchanged, true);
+  eq("and hands back the tag that matched, so the phone keeps polling cheaply",
+    poll.etag, first.etag);
+
+  const through = await handleGet(store, { code: "GGGG", etag: first.etag });
+  eq("the API passes that tag on", through.body.etag, first.etag);
 }
 
 // ---- end to end through the API, on the blob store -------------------------
