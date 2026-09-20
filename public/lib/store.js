@@ -97,9 +97,8 @@ export function blobStore() {
       } catch {
         return null; // BlobNotFoundError, and anything else that means "no game"
       }
-      const res = await fetch(freshBlobUrl(meta), { cache: "no-store" });
-      if (!res.ok) return null;
-      return { data: await res.json(), etag: meta.etag ?? null };
+      const data = await readBlobJson(meta);
+      return data === null ? null : { data, etag: meta.etag ?? null };
     },
     async etag(code) {
       const { head } = await import("@vercel/blob");
@@ -149,6 +148,49 @@ export function freshBlobUrl(meta) {
   if (meta.etag) url.searchParams.set("v", meta.etag);
   return url.toString();
 }
+
+/**
+ * Whether the origin-read form of the URL is accepted by this store. If it is
+ * ever rejected we stop asking for it, rather than paying two requests a read.
+ */
+let originReadWorks = true;
+
+/**
+ * Fetch a blob's body, preferring an origin read so the CDN cannot serve a
+ * copy from before the last write. The plain URL is the fallback: a slightly
+ * stale game is bad, but a game that reads as missing is far worse, and that
+ * is what a rejected URL looks like by the time it reaches a player.
+ *
+ * A transient failure gets one retry -- reads have been seen to fail with
+ * ECONNRESET mid-connection, and losing a whole game to that is not acceptable.
+ */
+export async function readBlobJson(meta, fetchImpl = fetch, log = console.warn) {
+  const urls = originReadWorks ? [freshBlobUrl(meta), meta.url] : [meta.url];
+
+  for (let attempt = 0; attempt < 2; attempt++) {
+    for (const url of urls) {
+      const origin = url !== meta.url;
+      try {
+        const res = await fetchImpl(url, { cache: "no-store" });
+        if (res.ok) {
+          if (origin === false && originReadWorks && urls.length > 1) {
+            originReadWorks = false;   // the store rejects the origin-read form
+            log("wizard blob: origin read rejected, falling back to the cached URL");
+          }
+          return await res.json();
+        }
+        if (origin) log(`wizard blob: origin read returned ${res.status}`);
+        else log(`wizard blob: read returned ${res.status}`);
+      } catch (err) {
+        log(`wizard blob: read failed (${(err && err.message) || err})`);
+      }
+    }
+  }
+  return null;
+}
+
+/** Test seam: forget what we learned about this store's URL handling. */
+export function resetBlobUrlProbe() { originReadWorks = true; }
 
 function isConflict(err) {
   const status = err && (err.status || err.statusCode);
