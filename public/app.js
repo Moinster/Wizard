@@ -126,6 +126,10 @@ async function poll(){
   try {
     const res = await fetch(`${apiUrl("api/game")}?${q}`, { cache:"no-store" });
     if (res.status === 404) { toast("That game is gone."); saveSession(null); game = null; render(); return; }
+    // Anything else that isn't ok is the server failing to read, not the game
+    // ending. Show it as a connection blip so the next poll can recover, and
+    // never claim we are up to date on the strength of an error.
+    if (!res.ok) { stale = true; updateConn(); return; }
     const data = await res.json();
     stale = false;
     if (data.unchanged) { quietPolls++; return; }

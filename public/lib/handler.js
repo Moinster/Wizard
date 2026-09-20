@@ -47,13 +47,12 @@ export async function handleGet(store, { code, etag, hostKey, seatKey }) {
   if (!code) return fail(400, "no_code", "No game code given.");
   code = String(code).toUpperCase();
 
-  // The cheap path: ask only for the version tag, and say nothing changed.
-  if (etag) {
-    const live = await store.etag(code);
-    if (live && live === etag) return { status: 200, body: { unchanged: true, etag: live } };
-  }
-  const current = await store.read(code);
+  // One call. Asking for the tag and then the body was two answers that could
+  // disagree, and they did: a current tag beside a body from before the last
+  // write, which left the phone believing it was up to date.
+  const current = await store.read(code, etag || null);
   if (!current) return fail(404, "no_game", "No game with that code.");
+  if (current.unchanged) return ok({ unchanged: true, etag: current.etag });
   return ok({ etag: current.etag, game: publicView(current.data, { hostKey, seatKey }) });
 }
 

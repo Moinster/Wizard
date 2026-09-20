@@ -7,13 +7,13 @@
   "main": "server.js",
   "scripts": {
     "start": "node server.js",
-    "test": "node test/run.mjs && node test/qr.mjs && node test/vercel.mjs",
+    "test": "node test/run.mjs && node test/qr.mjs && node test/vercel.mjs && node test/blob.mjs",
     "test:browser": "node test/browser.mjs && node test/static.mjs && node test/latency.mjs && node test/lobby.mjs"
   },
   "devDependencies": {
     "playwright": "^1.47.0"
   },
   "dependencies": {
-    "@vercel/blob": "^0.27.0"
+    "@vercel/blob": "^2.8.0"
   }
 }

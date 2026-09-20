@@ -2,7 +2,7 @@
 // secret escapes in a response. The game logic itself is covered by run.mjs;
 // this is the thin layer that only exists on Vercel, so nothing else exercises
 // it and a mistake here would only show up in production.
-import { memoryStore, freshBlobUrl, readBlobJson, resetBlobUrlProbe } from "../public/lib/store.js";
+import { memoryStore } from "../public/lib/store.js";
 import { route } from "../api/game.js";
 import health from "../api/health.js";
 
@@ -68,67 +68,9 @@ health({ method: "GET" }, {
 eq("health replies 200", status, 200);
 eq("health says ok, which is what the client checks", payload && payload.ok, true);
 
-// ---- blob reads must not come from the CDN --------------------------------
-{
-  // The CDN would otherwise hand back a body from before the last write while
-  // head() reports the new etag -- a current etag beside stale state, which
-  // makes the caller stop asking. This was worth a minute of lag in practice.
-  const u = new URL(freshBlobUrl({ url: "https://s.public.blob.vercel-storage.com/games/WZRD.json", etag: 'W/"a1b2"' }));
-  eq("the read bypasses the CDN", u.searchParams.get("cache"), "0");
-  eq("and is keyed on the version it expects", u.searchParams.get("v"), 'W/"a1b2"');
-  eq("the path is untouched", u.pathname, "/games/WZRD.json");
-
-  const noEtag = new URL(freshBlobUrl({ url: "https://s.public.blob.vercel-storage.com/games/AAAA.json" }));
-  eq("a store without etags still bypasses the CDN", noEtag.searchParams.get("cache"), "0");
-  ok("and adds no empty version", !noEtag.searchParams.has("v"), "v was set with no etag");
-
-  const existing = new URL(freshBlobUrl({ url: "https://s.public.blob.vercel-storage.com/g.json?x=1", etag: "e1" }));
-  eq("an existing query string survives", existing.searchParams.get("x"), "1");
-}
-
-// ---- a blob read must never make a live game look missing ------------------
-{
-  // An origin read is preferred so the CDN cannot serve a pre-write copy, but
-  // if the store rejects that URL the read has to fall back rather than return
-  // nothing: a caller that gets null reports "no game", and a player watches
-  // their game disappear.
-  const meta = { url: "https://s.blob.test/games/AAAA.json", etag: "e1" };
-  const quiet = () => {};
-
-  resetBlobUrlProbe();
-  let tried = [];
-  const rejectsOrigin = async (u) => {
-    tried.push(u);
-    return u.includes("cache=0") ? { ok: false, status: 400 } : { ok: true, json: async () => ({ round: 3 }) };
-  };
-  eq("a rejected origin read falls back", await readBlobJson(meta, rejectsOrigin, quiet), { round: 3 });
-  eq("it tried the origin form first", tried.length, 2);
-  tried = [];
-  await readBlobJson(meta, rejectsOrigin, quiet);
-  eq("and does not keep paying for a URL it knows is refused", tried.length, 1);
-
-  resetBlobUrlProbe();
-  tried = [];
-  const acceptsOrigin = async (u) => { tried.push(u); return { ok: true, json: async () => ({ round: 9 }) }; };
-  eq("an accepted origin read is used", await readBlobJson(meta, acceptsOrigin, quiet), { round: 9 });
-  eq("with no second request", tried.length, 1);
-  ok("and it is the origin form", tried[0].includes("cache=0"), tried[0]);
-
-  // ECONNRESET mid-read cost a whole game once; one retry covers it.
-  resetBlobUrlProbe();
-  let calls = 0;
-  const flaky = async () => {
-    calls++;
-    if (calls <= 2) throw new Error("read ECONNRESET");
-    return { ok: true, json: async () => ({ round: 1 }) };
-  };
-  eq("a transient read failure is retried", await readBlobJson(meta, flaky, quiet), { round: 1 });
-
-  resetBlobUrlProbe();
-  eq("and a genuinely unreadable blob still reports missing",
-    await readBlobJson(meta, async () => ({ ok: false, status: 500 }), quiet), null);
-  resetBlobUrlProbe();
-}
+// The Blob store itself -- origin reads, conditional writes, and what a broken
+// read must not be mistaken for -- is covered by test/blob.mjs, which drives it
+// against a fake that models the CDN lag and the etag preconditions.
 
 console.log(`${pass} passed, ${fails.length} failed`);
 if (fails.length) { console.log("\n" + fails.join("\n")); process.exit(1); }

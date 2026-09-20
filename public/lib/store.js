@@ -2,6 +2,16 @@
 // write it back only if that tag still holds. The tag is what makes concurrent
 // bids from several phones safe — a write that lost the race is rejected and
 // the caller retries against fresh state.
+//
+// `read(code, ifNoneMatch)` answers one of three things:
+//   null                        no game with that code
+//   { unchanged: true, etag }   the caller's tag is still current
+//   { data, etag }              the game, and the tag to write against
+//
+// The unchanged answer is what a polling phone gets nearly every time, so it
+// has to be one round trip and it has to be consistent with the body it is
+// standing in for. Asking for the tag and the body separately is what broke
+// this before: the tag came back current while the body was a version behind.
 
 const keyFor = (code) => `games/${code}.json`;
 
@@ -11,14 +21,11 @@ export function memoryStore() {
   let seq = 0;
   return {
     name: "memory",
-    async read(code) {
+    async read(code, ifNoneMatch = null) {
       const row = rows.get(code);
       if (!row) return null;
+      if (ifNoneMatch && row.etag === ifNoneMatch) return { unchanged: true, etag: row.etag };
       return { data: JSON.parse(row.body), etag: row.etag };
-    },
-    async etag(code) {
-      const row = rows.get(code);
-      return row ? row.etag : null;
     },
     async write(code, data, etag) {
       const row = rows.get(code);
@@ -48,13 +55,11 @@ export function localStorageStore(prefix = "wizard.game.") {
   };
   return {
     name: "localStorage",
-    async read(code) {
+    async read(code, ifNoneMatch = null) {
       const r = row(code);
-      return r ? { data: r.data, etag: r.etag } : null;
-    },
-    async etag(code) {
-      const r = row(code);
-      return r ? r.etag : null;
+      if (!r) return null;
+      if (ifNoneMatch && r.etag === ifNoneMatch) return { unchanged: true, etag: r.etag };
+      return { data: r.data, etag: r.etag };
     },
     async write(code, data, etag) {
       const r = row(code);
@@ -78,46 +83,70 @@ export function localStorageStore(prefix = "wizard.game.") {
  * process memory. Needs BLOB_READ_WRITE_TOKEN, which Vercel injects once a
  * Blob store is linked to the project.
  *
- * `ifMatch` gives a real compare-and-swap. If the SDK in use doesn't report an
- * etag, `etag()` returns null and writes fall back to last-writer-wins; the
- * worst case is a bid that has to be tapped again, never a corrupted game.
+ * Three options here are load-bearing, and all three were wrong in production
+ * because this talked to an SDK older than the API it was written against:
  *
- * The import is dynamic so this module stays loadable in a browser, where the
- * client only ever calls localStorageStore and this function is never entered.
+ *   `useCache: false` reads from origin storage. Blob bodies are otherwise
+ *   served through the CDN, which will hand back a copy from before the last
+ *   write while the metadata already reports the new version — a current tag
+ *   beside stale state, which makes the caller stop asking and looks to a
+ *   player like the table froze.
+ *
+ *   `ifNoneMatch` turns the poll into a 304 with no body, which is the whole
+ *   reason a phone can ask twice a second without costing anything.
+ *
+ *   `ifMatch` is the compare-and-swap. Without it every write is a blind
+ *   overwrite, so two phones acting at the same moment silently lose one of
+ *   the two. That is not a "tap it again" failure; nothing tells anyone.
+ *
+ * All three need @vercel/blob 2.x. The 0.27 line has none of them and ignores
+ * unknown options rather than refusing them, so a version slip costs the lot
+ * in silence — test/blob.mjs is what catches that now, by checking the fake it
+ * tests against still matches the installed package's own type definitions.
+ *
+ * The import is a parameter so tests can drive this against that fake, and so
+ * this module stays loadable in a browser, where the client only ever reaches
+ * localStorageStore and never enters this function.
  */
-export function blobStore() {
-  const keyFor = (code) => `games/${code}.json`;
+export function blobStore(loadBlob = () => import("@vercel/blob")) {
   return {
     name: "blob",
-    async read(code) {
-      const { head } = await import("@vercel/blob");
-      let meta;
-      try {
-        meta = await head(keyFor(code));
-      } catch {
-        return null; // BlobNotFoundError, and anything else that means "no game"
+
+    async read(code, ifNoneMatch = null) {
+      const { get, BlobNotFoundError } = await loadBlob();
+      const ask = () => get(keyFor(code), {
+        access: "public",
+        useCache: false,
+        ...(ifNoneMatch ? { ifNoneMatch } : {}),
+      });
+
+      // Reads have been seen to die mid-connection with ECONNRESET. One retry,
+      // and then the error goes up: the API has to answer a read it could not
+      // make with a 500, never with the 404 that tells a player their game is
+      // gone and clears it off their phone.
+      let last = null;
+      for (let attempt = 0; attempt < 2; attempt++) {
+        try {
+          const res = await ask();
+          if (res.statusCode === 304) return { unchanged: true, etag: res.blob.etag };
+          const body = await new Response(res.stream).text();
+          return { data: JSON.parse(body), etag: res.blob.etag };
+        } catch (err) {
+          if (isMissing(err, BlobNotFoundError)) return null;
+          last = err;
+        }
       }
-      const data = await readBlobJson(meta);
-      return data === null ? null : { data, etag: meta.etag ?? null };
+      throw last;
     },
-    async etag(code) {
-      const { head } = await import("@vercel/blob");
-      try {
-        const meta = await head(keyFor(code));
-        return meta.etag ?? null;
-      } catch {
-        return null;
-      }
-    },
+
     async write(code, data, etag) {
-      const { put } = await import("@vercel/blob");
+      const { put } = await loadBlob();
       try {
         await put(keyFor(code), JSON.stringify(data), {
           access: "public",
           addRandomSuffix: false,
           allowOverwrite: etag !== null,
           contentType: "application/json",
-          cacheControlMaxAge: 0,
           ...(etag ? { ifMatch: etag } : {}),
         });
         return { ok: true };
@@ -131,70 +160,18 @@ export function blobStore() {
   };
 }
 
-/**
- * Blob content is served through the CDN, so a plain fetch of `meta.url` can
- * hand back a copy from before the last write -- while `head()` reports the
- * new etag, because that comes from the control API. The pair is poison: the
- * caller stores a current etag beside stale state and then believes it is up
- * to date until something else changes.
- *
- * `cache=0` is the documented way to read from origin instead. Keying the URL
- * on the version as well means that even a store that ignores it cannot serve
- * one version's body under another version's URL.
- */
-export function freshBlobUrl(meta) {
-  const url = new URL(meta.url);
-  url.searchParams.set("cache", "0");
-  if (meta.etag) url.searchParams.set("v", meta.etag);
-  return url.toString();
+/** No blob under that key — the one error that means "no game", not "broken". */
+function isMissing(err, BlobNotFoundError) {
+  if (!err) return false;
+  if (typeof BlobNotFoundError === "function" && err instanceof BlobNotFoundError) return true;
+  if ((err.status || err.statusCode) === 404) return true;
+  return err.name === "BlobNotFoundError";
 }
-
-/**
- * Whether the origin-read form of the URL is accepted by this store. If it is
- * ever rejected we stop asking for it, rather than paying two requests a read.
- */
-let originReadWorks = true;
-
-/**
- * Fetch a blob's body, preferring an origin read so the CDN cannot serve a
- * copy from before the last write. The plain URL is the fallback: a slightly
- * stale game is bad, but a game that reads as missing is far worse, and that
- * is what a rejected URL looks like by the time it reaches a player.
- *
- * A transient failure gets one retry -- reads have been seen to fail with
- * ECONNRESET mid-connection, and losing a whole game to that is not acceptable.
- */
-export async function readBlobJson(meta, fetchImpl = fetch, log = console.warn) {
-  const urls = originReadWorks ? [freshBlobUrl(meta), meta.url] : [meta.url];
-
-  for (let attempt = 0; attempt < 2; attempt++) {
-    for (const url of urls) {
-      const origin = url !== meta.url;
-      try {
-        const res = await fetchImpl(url, { cache: "no-store" });
-        if (res.ok) {
-          if (origin === false && originReadWorks && urls.length > 1) {
-            originReadWorks = false;   // the store rejects the origin-read form
-            log("wizard blob: origin read rejected, falling back to the cached URL");
-          }
-          return await res.json();
-        }
-        if (origin) log(`wizard blob: origin read returned ${res.status}`);
-        else log(`wizard blob: read returned ${res.status}`);
-      } catch (err) {
-        log(`wizard blob: read failed (${(err && err.message) || err})`);
-      }
-    }
-  }
-  return null;
-}
-
-/** Test seam: forget what we learned about this store's URL handling. */
-export function resetBlobUrlProbe() { originReadWorks = true; }
 
 function isConflict(err) {
   const status = err && (err.status || err.statusCode);
   if (status === 412 || status === 409) return true;
+  if (err && err.name === "BlobPreconditionFailedError") return true;
   const text = String((err && err.message) || "").toLowerCase();
   return text.includes("precondition") || text.includes("already exists") || text.includes("conflict");
 }
