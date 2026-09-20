@@ -25,6 +25,7 @@ let prevTotals = null;
 let polling = false;
 let stale = false;
 let setupDraft = { name:"", seats:4, rounds:null, names:[] };
+let writesInFlight = 0;    // a tap we've drawn locally but the server hasn't confirmed
 let solo = false;          // true when there's no server: the game runs in this browser
 let localApi = null;       // {store, handlePost, handleGet, sanitize} in solo mode
 let joinDraft = { name:"", code:"" };
@@ -94,7 +95,9 @@ async function api(body){
 }
 
 async function poll(){
-  if (!session || solo) return;   // nothing else writes the store in solo mode
+  // A poll that overlaps our own in-flight write would answer with the board
+  // as it was before the tap, and the tap would appear to undo itself.
+  if (!session || solo || writesInFlight) return;
   const q = new URLSearchParams({ code: session.code });
   if (etag) q.set("etag", etag);
   if (session.hostKey) q.set("hostKey", session.hostKey);
@@ -115,6 +118,10 @@ async function poll(){
 function adopt(data){
   if (data.etag) etag = data.etag;
   if (!data.game) return;
+  // Responses can arrive out of order: a poll sent before a bid landed can
+  // answer after it, carrying the older board. Every write bumps `v`, so a
+  // lower one is stale and applying it would undo what the player just did.
+  if (game && typeof game.v === "number" && typeof data.game.v === "number" && data.game.v < game.v) return;
   const before = game ? game.totals : null;
   const scored = game && data.game.history.length !== game.history.length;
   game = data.game;
@@ -561,13 +568,22 @@ function wire(){
 
     // --- play ---
     if (b.dataset.mybid !== undefined) {
-      const v = Number(b.dataset.mybid);
-      if (myBid() === v) return act({ action:"clearBid", idx: game.youIdx });
-      return act({ action:"bid", idx: game.youIdx, value: v });
+      const v = Number(b.dataset.mybid), idx = game.youIdx;
+      if (myBid() === v) return optimistic((g) => { delete g.bids[idx]; }, { action:"clearBid", idx });
+      return optimistic((g) => { g.bids[idx] = v; }, { action:"bid", idx, value: v });
     }
-    if (b.dataset.forbid !== undefined) return act({ action:"bid", idx:Number(b.dataset.idx), value:Number(b.dataset.forbid) });
-    if (b.dataset.trick !== undefined) return act({ action:"setTrick", idx:Number(b.dataset.idx), value:Number(b.dataset.trick) });
-    if (b.dataset.trump) return act({ action:"trump", trump: game.trump === b.dataset.trump ? null : b.dataset.trump });
+    if (b.dataset.forbid !== undefined) {
+      const v = Number(b.dataset.forbid), idx = Number(b.dataset.idx);
+      return optimistic((g) => { g.bids[idx] = v; }, { action:"bid", idx, value: v });
+    }
+    if (b.dataset.trick !== undefined) {
+      const v = Number(b.dataset.trick), idx = Number(b.dataset.idx);
+      return optimistic((g) => { g.tricks[idx] = v; }, { action:"setTrick", idx, value: v });
+    }
+    if (b.dataset.trump) {
+      const trump = game.trump === b.dataset.trump ? null : b.dataset.trump;
+      return optimistic((g) => { g.trump = trump; }, { action:"trump", trump });
+    }
     if (b.id === "to-tricks")  return act({ action:"toTricks" });
     if (b.id === "back-bids")  return act({ action:"backToBids" });
     if (b.id === "do-score")   return act({ action:"score" });
@@ -579,8 +595,28 @@ function wire(){
 
 async function act(body){
   if (!session) return;
-  const data = await api({ ...body, code: session.code, hostKey: session.hostKey, seatKey: session.seatKey });
-  if (data) { etag = null; adopt({ game: data.game }); poll(); }
+  writesInFlight++;
+  let data = null;
+  try {
+    data = await api({ ...body, code: session.code, hostKey: session.hostKey, seatKey: session.seatKey });
+  } finally {
+    writesInFlight--;
+  }
+  // The reply already carries the new board, so there is nothing to poll for.
+  // Clearing the etag just makes the next scheduled poll a full read.
+  etag = null;
+  if (data) adopt({ game: data.game });
+  else poll();   // the write was refused: drop our optimistic guess for the truth
+}
+
+/**
+ * Draw a tap immediately, then send it. Waiting for a round trip before
+ * drawing is what made bidding feel laggy once the backend stopped being
+ * a laptop on the same Wi-Fi.
+ */
+function optimistic(apply, body){
+  if (game) { apply(game); render(); }
+  return act(body);
 }
 
 async function create(){
