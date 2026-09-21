@@ -237,9 +237,80 @@ function isConflict(err) {
   return text.includes("precondition") || text.includes("already exists") || text.includes("conflict");
 }
 
+/**
+ * Supabase store: one Postgres row per game, behind two SQL functions that are
+ * the only way in (the table itself is closed to every API role). A read is
+ * the row as it is now -- there is no cache in front of a database -- and a
+ * write is a single UPDATE ... WHERE version = the one we read, so the
+ * compare-and-swap is one atomic statement and never a guess about whether
+ * the copy in hand is current. That is the whole reason this store exists:
+ * Blob's body reads came off a CDN, seconds behind a write, and no option
+ * this project could set changed that on a public store.
+ *
+ * Talks to PostgREST with fetch and no SDK: two POSTs, a JSON body each.
+ * `fetchFn` is a parameter so the tests can stand in for the network.
+ */
+export function supabaseStore({ url, key, fetchFn = (...a) => globalThis.fetch(...a) } = {}) {
+  if (!url || !key) throw new Error("supabaseStore needs a url and a key");
+  const base = url.replace(/\/+$/, "") + "/rest/v1/rpc/";
+  const headers = {
+    apikey: key,
+    "Content-Type": "application/json",
+    // A legacy anon key is a JWT and doubles as the bearer; a publishable
+    // key is not a token, and PostgREST assumes the anon role without one.
+    ...(key.startsWith("ey") ? { Authorization: `Bearer ${key}` } : {}),
+  };
+
+  async function rpc(name, args) {
+    let last = null;
+    for (let attempt = 0; attempt < 3; attempt++) {
+      if (attempt > 0) await pause(120 * 2 ** (attempt - 1) * (0.7 + 0.6 * Math.random()));
+      let res;
+      try {
+        res = await fetchFn(base + name, { method: "POST", headers, body: JSON.stringify(args) });
+      } catch (err) {
+        last = err;            // the connection died; try again
+        continue;
+      }
+      if (res.ok) return res.json();
+      const text = await res.text().catch(() => "");
+      last = Object.assign(new Error(`supabase ${name}: ${res.status} ${text.slice(0, 200)}`), { status: res.status });
+      if (!(res.status === 429 || res.status >= 500)) break;   // our fault, not the weather
+    }
+    throw last;
+  }
+
+  return {
+    name: "supabase",
+
+    async read(code, ifNoneMatch = null) {
+      const rows = await rpc("wizard_read", { p_code: code });
+      const row = Array.isArray(rows) ? rows[0] : null;
+      if (!row) return null;
+      const etag = String(row.version);
+      if (ifNoneMatch && ifNoneMatch === etag) return { unchanged: true, etag };
+      return { data: row.data, etag };
+    },
+
+    // No fresh(): the read IS the store's current view, so mutate() has
+    // nothing to reconcile it against and skips that round trip.
+
+    async write(code, data, etag) {
+      const version = await rpc("wizard_write", {
+        p_code: code,
+        p_data: data,
+        p_version: etag === null ? null : Number(etag),
+      });
+      // The function answers the new version, or null when the write lost:
+      // another phone wrote first, or a create found the code taken.
+      return { ok: typeof version === "number" };
+    },
+  };
+}
+
 /** The store a serverless deployment should use, or null if none is configured. */
-export function defaultStore() {
-  return typeof process !== "undefined" && process.env && process.env.BLOB_READ_WRITE_TOKEN
-    ? blobStore()
-    : null;
+export function defaultStore(env = (typeof process !== "undefined" && process.env) || {}) {
+  if (env.SUPABASE_URL && env.SUPABASE_KEY) return supabaseStore({ url: env.SUPABASE_URL, key: env.SUPABASE_KEY });
+  if (env.BLOB_READ_WRITE_TOKEN) return blobStore();
+  return null;
 }

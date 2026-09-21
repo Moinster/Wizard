@@ -1,8 +1,8 @@
 // Vercel serverless function: the HTTP skin over the shared game logic.
 //
 // Vercel gives each request a fresh, stateless invocation, so the game cannot
-// live in process memory the way it does under server.js. State goes to a Blob
-// store instead, behind the same three-call interface.
+// live in process memory the way it does under server.js. State goes to a
+// database instead (Supabase, or a Blob store), behind the same interface.
 
 import { defaultStore } from "../public/lib/store.js";
 import { handleGet, handlePost, sanitize } from "../public/lib/handler.js";
@@ -49,7 +49,7 @@ export default async function handler(req, res) {
   if (!store) {
     return res.status(500).json({
       error: "no_store",
-      message: "No Blob store is connected to this project. Add one in Vercel and redeploy.",
+      message: "No database is connected to this project. Set SUPABASE_URL and SUPABASE_KEY (or connect a Blob store) and redeploy.",
     });
   }
 
