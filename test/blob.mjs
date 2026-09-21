@@ -219,6 +219,9 @@ function fakeBlob({ failReads = 0, throwOnMissing = false, etagOn304 = true } = 
 
   await handlePost(store, { action: "join", code, name: "Jonas" });
   await handlePost(store, { action: "join", code, name: "Ada" });
+  // The race below is about bids landing together, which only all-at-once
+  // bidding allows; in turn, the second would be refused as out of turn.
+  await handlePost(store, { action: "settings", code, hostKey, bidding: "open" });
   eq("start over blob returns 200", (await handlePost(store, { action: "start", code, hostKey })).status, 200);
 
   const read = await handleGet(store, { code, hostKey });

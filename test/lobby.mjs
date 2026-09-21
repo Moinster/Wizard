@@ -58,12 +58,9 @@ await host.waitForFunction(() => {
 }, null, { timeout: 8000 });
 check('the host can reorder the table', await names(host), ['Ben', 'Ana', 'Cass']);
 check('the dealer badge follows the person, not the row', await dealsFirst(host), 'Ana');
-
-await p2.waitForFunction(() => {
-  const n = [...document.querySelectorAll('.roster-name:not(.empty)')].map((e) => e.textContent.trim());
-  return n[0] === 'Ben';
-}, null, { timeout: 8000 });
-check('the other phones see the new order', await names(p2), ['Ben', 'Ana', 'Cass']);
+check('the arrangement is marked unsaved', await host.$('#save-seating') !== null, true);
+await p2.waitForTimeout(1500);
+check('the other phones do not see it until it is saved', await names(p2), ['Ana', 'Ben', 'Cass']);
 check('a player gets no reorder controls', await p2.$('.mini[data-move]'), null);
 
 // ---- choosing the dealer --------------------------------------------------
@@ -79,7 +76,7 @@ const chosen = (pg, attr) => pg.$eval(`.opt[data-${attr}][aria-pressed="true"]`,
 const note = (pg, attr) => pg.$eval(`.opt[data-${attr}]`, (e) => e.closest('.field').querySelector('.opt-note').textContent.trim());
 
 check('scoring defaults to standard', await chosen(host, 'scoring'), 'Standard');
-check('bidding defaults to open', await chosen(host, 'bidding'), 'Open bidding');
+check('bidding defaults to in turn', await chosen(host, 'bidding'), 'In turn');
 check('each option explains itself', (await note(host, 'scoring')).includes('20 plus 10 a trick'), true);
 
 await host.click('.opt[data-scoring="zeroScales"]');
@@ -90,11 +87,17 @@ await host.waitForFunction(() => {
 check('picking a variant updates the instructions', (await note(host, 'scoring')).includes('10 per card dealt'), true);
 
 await host.click('.opt[data-bidding="blind"]');
+
+// ---- one save carries the order, the dealer and the rules -----------------
+await host.click('#save-seating');
 await p3.waitForFunction(() => {
   const el = document.querySelector('.opt[data-bidding][aria-pressed="true"]');
-  return el && /Blind/.test(el.textContent);
+  return el && /blind/i.test(el.textContent);
 }, null, { timeout: 8000 });
-check('the rules reach the other phones', await chosen(p3, 'bidding'), 'Blind bidding');
+check('the rules reach the other phones once saved', await chosen(p3, 'bidding'), 'All at once, blind');
+check('and so does the order', await names(p3), ['Ben', 'Ana', 'Cass']);
+check('and the dealer', await dealsFirst(p3), 'Cass');
+check('the host is told it saved', (await host.textContent('.pill.sent')).includes('saved'), true);
 check('a player cannot change them', await p3.$eval('.opt[data-bidding="open"]', (e) => e.disabled), true);
 
 // ---- and they hold once dealt ---------------------------------------------
@@ -108,6 +111,7 @@ check('round 1 is dealt by the chosen dealer',
 // Blind bidding: Ben bids, and Cass must not be able to see the value.
 await p2.waitForSelector('.your-turn .chip', { timeout: 8000 });
 await p2.click('.chip[data-mybid="1"]');
+await p2.click('#confirm-bid');
 await p3.waitForFunction(() => document.querySelectorAll('.bid-chip.in').length >= 1, null, { timeout: 8000 });
 const seenByCass = await p3.$$eval('.bid-chip.in', (e) => e.map((n) => n.textContent.trim()));
 check('a blind bid shows as placed but not as a number', seenByCass, ['✓']);

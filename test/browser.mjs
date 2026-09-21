@@ -71,23 +71,44 @@ check('players get pushed into the round', (await p2.textContent('.round-title')
 check('everyone sees three score tiles', await tiles(p2), [0, 0, 0]);
 check('tiles name the whole table', (await names(p3)).sort(), ['Jonas', 'Mira', 'Priya']);
 
-// ---- each phone places its own bid ----
-const myBid = (pg, v) => pg.click(`.chip[data-mybid="${v}"]`);
-check('a player only gets their own bid chips', await p2.$$eval('.your-turn .panel-title', (e) => e.length), 1);
-await myBid(p2, 1);
+// ---- each phone places its own bid, in turn ----
+// Bidding is in turn by default: Mira (seat 0) deals, so Jonas bids first,
+// then Priya, then Mira. A bid is a pick and a confirm; nothing is sent by
+// the pick alone.
+const pick = (pg, v) => pg.click(`.chip[data-mybid="${v}"]`);
+const myBid = async (pg, v) => { await pick(pg, v); await pg.click('#confirm-bid'); };
+check('the player who is up gets bid chips', await p2.$$eval('.your-turn .chip[data-mybid]', (e) => e.length), 2);
+check('a player who is not up gets none', await p3.$('.chip[data-mybid]'), null);
+check('and is told who they are waiting for', (await p3.textContent('.waiting')).includes('Jonas'), true);
+
+await pick(p2, 1);
+await p2.waitForTimeout(300);
+check('picking a number sends nothing yet', await host.$$eval('.bid-chip.in', (e) => e.length), 0);
+check('the confirm button says what it will send', (await p2.textContent('#confirm-bid')).trim(), 'Confirm bid of 1');
+await p2.click('#confirm-bid');
 await host.waitForFunction(() => document.querySelectorAll('.bid-chip.in').length === 1, null, { timeout: 8000 });
-check('host sees a bid arrive from another phone', await host.$$eval('.bid-chip.in', (e) => e.map((n) => n.textContent.trim())), ['1']);
+check('host sees the confirmed bid arrive', await host.$$eval('.bid-chip.in', (e) => e.map((n) => n.textContent.trim())), ['1']);
+await p2.waitForSelector('.pill.sent', { timeout: 8000 });
+check('the bidder is told it went in', (await p2.textContent('.pill.sent')).includes('Bid of 1 in'), true);
 check('host cannot close bidding early', await host.isDisabled('#to-tricks'), true);
 
-await myBid(host, 0);
+await p3.waitForSelector('.chip[data-mybid]', { timeout: 8000 });
 await myBid(p3, 0);
+await host.waitForSelector('.chip[data-mybid]', { timeout: 8000 });
+await myBid(host, 0);
 await host.waitForFunction(() => { const b = document.querySelector('#to-tricks'); return b && !b.disabled; }, null, { timeout: 8000 });
+// The host knows from its own reply; the other phones learn on their next poll.
+await p3.waitForFunction(() => document.querySelectorAll('.bid-chip.in').length === 3, null, { timeout: 8000 });
 check('bids are visible to every phone', await p3.$$eval('.bid-chip', (e) => e.map((n) => n.textContent.trim())).then((a) => a.sort()), ['0', '0', '1']);
 
-// changing a bid before bidding closes
-await myBid(p2, 0);
-await p2.waitForTimeout(400);
-await myBid(p2, 1);
+// Only the last bidder may change their mind; the order never gets a hole.
+check('an earlier bidder cannot change theirs', await p2.$('#change-bid'), null);
+await host.click('#change-bid');
+await myBid(host, 1);
+await p2.waitForFunction(() => [...document.querySelectorAll('.bid-chip')].map((n) => n.textContent.trim()).sort().join() === '0,1,1', null, { timeout: 8000 });
+check('the last bidder can', await p2.$$eval('.bid-chip', (e) => e.map((n) => n.textContent.trim())).then((a) => a.sort()), ['0', '1', '1']);
+await host.click('#change-bid');
+await myBid(host, 0);
 await host.waitForFunction(() => { const b = document.querySelector('#to-tricks'); return b && !b.disabled; }, null, { timeout: 8000 });
 
 // ---- host closes bidding and scores ----
@@ -101,10 +122,17 @@ check('a player has no trick entry', await p2.$('.chip[data-trick]'), null);
 
 const seatOf = async (pg, who) => pg.$$eval('.tile-name', (e, w) => e.findIndex((n) => n.textContent.trim() === w), who);
 const jonas = await seatOf(host, 'Jonas');
-for (const [idx, v] of [[0, 0], [1, 0], [2, 0]]) {
-  await host.click(`.chip[data-trick="${idx === jonas ? 1 : 0}"][data-idx="${idx}"]`);
-}
+// The sheet is filled in locally and sent once; nothing scores by itself.
+await host.click(`.chip[data-trick="1"][data-idx="${jonas}"]`);
+await host.click(`.chip[data-trick="1"][data-idx="${(jonas + 1) % 3}"]`);
+check('the sheet refuses a total that does not add up', await host.isDisabled('#do-score'), true);
+check('and says why', (await host.textContent('.tally .pill')).includes('still to enter'), true);
+await host.click(`.chip[data-trick="0"][data-idx="${(jonas + 2) % 3}"]`);
+check('still refused when every seat is in but the sum is wrong', await host.isDisabled('#do-score'), true);
+check('naming the surplus', (await host.textContent('.tally .pill')).includes('too many'), true);
+await host.click(`.chip[data-trick="0"][data-idx="${(jonas + 1) % 3}"]`);
 await host.waitForFunction(() => { const b = document.querySelector('#do-score'); return b && !b.disabled; }, null, { timeout: 8000 });
+check('nothing has been sent while the sheet was being filled', await p2.$$eval('.round-title', (e) => e.map((n) => n.textContent.replace(/\s+/g, ' ').trim())), ['Round 1 / 20']);
 await host.click('#do-score');
 
 await p3.waitForFunction(() => [...document.querySelectorAll('[data-score-for]')].some((n) => +n.dataset.value !== 0), null, { timeout: 8000 });
@@ -119,7 +147,9 @@ check('round advanced everywhere', (await p2.textContent('.round-title')).replac
 // ---- a refresh keeps your seat ----
 await p2.reload();
 await p2.waitForSelector('.round-title', { timeout: 8000 });
-check('reload rejoins the same seat', await p2.$$eval('.your-turn', (e) => e.length), 1);
+// In round 2 Jonas deals, so he is not up to bid and gets no bid panel; the
+// "You" badge on the roster is what says the reload landed on his seat.
+check('reload rejoins the same seat', await p2.$$eval('.badge', (e) => e.filter((n) => n.textContent.trim() === 'You').length), 1);
 check('reload keeps the scores', await tiles(p2), want);
 
 // ---- big scores view ----

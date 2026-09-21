@@ -4,8 +4,8 @@
 import {
   ROUNDS_FOR, newGame, publicView, randomCode,
   applyJoin, applyRename, applyStart, applyBid, applyClearBid, applyTrump,
-  applyReorder, applyDealerStart, applySettings,
-  applyToTricks, applyBackToBids, applySetTrick, applyScore, applyUndo, applyRematch,
+  applyReorder, applyDealerStart, applySettings, applySeating,
+  applyToTricks, applyBackToBids, applySetTrick, applyScore, applyScoreRound, applyUndo, applyRematch,
 } from "./game.js";
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
@@ -124,7 +124,13 @@ export async function handlePost(store, body) {
     case "settings":
       return guard((g) => applySettings(g, { scoring: body.scoring, bidding: body.bidding }), { hostOnly: true });
     case "bid":
-      return guard((g) => applyBid(g, { idx: Number(body.idx), value: Number(body.value) }), { idx: Number(body.idx) });
+      return guard((g) => applyBid(g, { idx: Number(body.idx), value: Number(body.value), round: body.round }), { idx: Number(body.idx) });
+    case "seating":
+      return guard((g) => applySeating(g, {
+        order: body.order, dealerStart: body.dealerStart, scoring: body.scoring, bidding: body.bidding,
+      }), { hostOnly: true });
+    case "scoreRound":
+      return guard((g) => applyScoreRound(g, { tricks: body.tricks, round: body.round }), { hostOnly: true });
     case "clearBid":
       return guard((g) => applyClearBid(g, { idx: Number(body.idx) }), { idx: Number(body.idx) });
     case "trump":

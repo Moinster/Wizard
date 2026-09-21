@@ -60,11 +60,20 @@ await pg.click('#do-create');
 await pg.waitForSelector('.round-title', { timeout: 10000 });
 check('deals straight into round 1', (await pg.textContent('.round-title')).replace(/\s+/g,' ').trim(), 'Round 1 / 20');
 check('scoreboard shows the table', await pg.$$eval('.tile-name', (e) => e.map((n) => n.textContent.trim()).sort()), ['Jonas','Mira','Priya']);
-check('one device enters every bid', await pg.$$eval('.chip[data-forbid]', (e) => e.length), 3 * 2);
+// Bidding is in turn by default, so the one device enters bids for the seat
+// that is up, one seat at a time: two chips (0 and 1) for the seat due.
+check('one device enters the bid for whoever is up', await pg.$$eval('.chip[data-forbid]', (e) => e.length), 2);
 
 const seatOf = async (who) => pg.$$eval('.tile-name', (e, w) => e.findIndex((n) => n.textContent.trim() === w), who);
 const mira = await seatOf('Mira');
-for (let i = 0; i < 3; i++) await pg.click(`.chip[data-forbid="${i === mira ? 1 : 0}"][data-idx="${i}"]`);
+for (let k = 0; k < 3; k++) {
+  const idx = await pg.$eval('.chip[data-forbid]', (e) => +e.dataset.idx);
+  await pg.click(`.chip[data-forbid="${idx === mira ? 1 : 0}"][data-idx="${idx}"]`);
+  await pg.waitForFunction((prev) => {
+    const c = document.querySelector('.chip[data-forbid]');
+    return !c || +c.dataset.idx !== prev;
+  }, idx, { timeout: 8000 });
+}
 await pg.waitForFunction(() => { const x = document.querySelector('#to-tricks'); return x && !x.disabled; }, null, { timeout: 8000 });
 await pg.click('#to-tricks');
 await pg.waitForSelector('.chip[data-trick]');
