@@ -21,19 +21,23 @@ const fail = (status, error, message) => ({ status, body: { error, message } });
  *
  * Contention here is the normal case, not an edge case: everyone at the table
  * bids within a second or two of each other, every round. Only one writer can
- * win a round, so the Nth player needs N rounds -- and a round costs a read
- * plus a write, which is most of a second against Blob. A fixed five attempts
- * therefore turned players away by arithmetic alone: a six-player table could
- * not get its last bid in however well the network behaved.
+ * win a round, so the Nth player needs N rounds, and a round costs a read plus
+ * a write — most of a second against Blob.
  *
- * So retry against a DEADLINE rather than a count, and back off proportionally
- * so losers spread out instead of thrashing into each other. The budget stays
- * clear of the platform's own function timeout (10s by default on Vercel) so a
- * caller always gets a real answer rather than a dead connection. The player
- * sees none of this: the client renders their tap immediately and this only
- * has to land eventually.
+ * The trap is that retrying HARDER makes it worse. An origin read bypasses the
+ * CDN and the store rate limits those, so six phones retrying tightly for
+ * several seconds walked into the limit and bids came back as server errors
+ * instead of landing: 19 of 30 through with 7 outright failures, against 27 of
+ * 30 and no failures when the loop gave up sooner. Persistence was the problem.
+ *
+ * So a loser picks a slot in a window that WIDENS with each miss. Two writers
+ * that collided once are then unlikely to collide again, and the store sees a
+ * trickle rather than a burst, so the table gets through in fewer attempts and
+ * fewer reads. The aim is to lower the request rate, not to raise persistence.
+ * The budget stays clear of the platform's 10s function timeout, and a player
+ * who still loses is asked to tap again rather than left with a broken board.
  */
-const RETRY_BUDGET_MS = 7000;
+const RETRY_BUDGET_MS = 5500;
 
 async function mutate(store, code, fn, opts = {}) {
   const budget = opts.budgetMs ?? RETRY_BUDGET_MS;
@@ -52,14 +56,11 @@ async function mutate(store, code, fn, opts = {}) {
     const written = await store.write(code, next, current.etag);
     if (written.ok) return { status: 200, body: { ...out, game: next } };
 
-    // Someone else got there first. Their write has just landed, so the state
-    // is fresh again; wait only long enough to not collide with the other
-    // losers, and give up only when there is no time left to try properly.
-    const wait = Math.min(600, 60 * 2 ** (attempt - 1)) * (0.5 + Math.random());
+    const wait = Math.min(2400, 300 * attempt) * Math.random();
     if (now() + wait >= deadline) break;
     await sleepFn(wait);
   }
-  return fail(409, "busy", "Too many phones wrote at once. Try that again.");
+  return fail(409, "busy", "Too many phones at once. Tap it again.");
 }
 
 /** The host may act for any seat; a player may only act for their own. */

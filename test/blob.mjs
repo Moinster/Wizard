@@ -40,11 +40,12 @@ class BlobAlreadyExistsError extends Error {
  * lags `origin` by one write, which is what the real CDN does and what makes
  * dropping useCache:false a test failure rather than a production incident.
  */
-function fakeBlob({ failReads = 0, throwOnMissing = false, etagOn304 = true } = {}) {
+function fakeBlob({ failReads = 0, throwOnMissing = false, etagOn304 = true, rateLimitReads = 0 } = {}) {
   const origin = new Map();   // pathname -> { body, etag }
   const cdn = new Map();
   let seq = 0;
   let readsLeftToFail = failReads;
+  let rateLimitedLeft = rateLimitReads;
   const calls = { get: [], put: [] };
 
   return {
@@ -61,6 +62,12 @@ function fakeBlob({ failReads = 0, throwOnMissing = false, etagOn304 = true } = 
           const err = new Error("fetch failed");
           err.cause = new Error("read ECONNRESET");
           throw err;
+        }
+        if (rateLimitedLeft > 0) {
+          // What the real store does to an origin-read burst: sheds it with a
+          // 403. The token is fine; it read the same key a moment ago.
+          rateLimitedLeft--;
+          throw new Error("Vercel Blob: Failed to fetch blob: 403 Forbidden");
         }
         const live = origin.get(pathname);
         // The real get() signals an absent blob by RETURNING null. The fake
@@ -206,6 +213,34 @@ function fakeBlob({ failReads = 0, throwOnMissing = false, etagOn304 = true } = 
 
   const through = await handleGet(store, { code: "GGGG", etag: first.etag });
   eq("the API passes that tag on", through.body.etag, first.etag);
+}
+
+// ---- the store shedding load is not the game breaking ---------------------
+{
+  // Retrying a compare-and-swap harder made this worse, not better: origin
+  // reads bypass the CDN, the store rate limits them, and a table bidding at
+  // once walked into the limit. Those 403s reached players as "something broke
+  // on the server" and their bid vanished. Measured in production at 7 of 30
+  // bids lost that way.
+  const fake = fakeBlob({ rateLimitReads: 2 });
+  const store = blobStore(async () => fake.module);
+  await store.write("HHHH", { v: 1 }, null);
+
+  const got = await store.read("HHHH");
+  eq("a rate-limited read is waited out, not surfaced", got.data, { v: 1 });
+
+  const shedding = blobStore(async () => fakeBlob({ rateLimitReads: 99 }).module);
+  let threw = null;
+  try { await shedding.read("HHHH"); } catch (err) { threw = err; }
+  ok("a store that only ever sheds still raises, rather than claiming no game",
+    threw !== null && /403/.test(threw.message), String(threw && threw.message));
+
+  // A 403 must never be mistaken for the blob being absent: that would tell a
+  // player mid-game that their game is gone and wipe it off their phone.
+  const viaApi = blobStore(async () => fakeBlob({ rateLimitReads: 99 }).module);
+  let apiThrew = false;
+  try { await handleGet(viaApi, { code: "HHHH" }); } catch { apiThrew = true; }
+  ok("and the API raises rather than answering 404", apiThrew, "it answered instead of raising");
 }
 
 // ---- end to end through the API, on the blob store -------------------------

@@ -172,9 +172,9 @@ function pollGap(){
   if (document.hidden) return 5000;
   if (!game) return 2000;
   if (game.status === "done") return 3000;
-  if (game.status === "lobby") return quietPolls >= 10 ? 1600 : 800;
-  if (quietPolls < 3) return 600;      // something just moved; more is coming
-  return quietPolls >= 10 ? 2500 : 1100;
+  if (game.status === "lobby") return quietPolls >= 10 ? 1800 : 900;
+  if (quietPolls < 3) return 900;      // something just moved; more is coming
+  return quietPolls >= 10 ? 2500 : 1300;
 }
 
 function startPolling(){
