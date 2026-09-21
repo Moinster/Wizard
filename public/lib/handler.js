@@ -3,7 +3,7 @@
 
 import {
   ROUNDS_FOR, newGame, publicView, randomCode,
-  applyJoin, applyRename, applyStart, applyBid, applyClearBid, applyTrump,
+  applyJoin, applyAddPlayer, applyRemovePlayer, applyRename, applyStart, applyBid, applyClearBid, applyTrump,
   applyReorder, applyDealerStart, applySettings, applySeating,
   applyToTricks, applyBackToBids, applySetTrick, applyScore, applyScoreRound, applyUndo, applyRematch,
 } from "./game.js";
@@ -102,21 +102,29 @@ export async function handlePost(store, body) {
   const code = body.code ? String(body.code).toUpperCase() : null;
 
   if (action === "create") {
-    const seatCount = Math.max(2, Math.min(8, Number(body.seatCount) || 4));
+    // The scorekeeper either takes a seat and opens the rest to phones, or
+    // names the whole table and runs it from their own device.
+    const hostRuns = Boolean(body.hostRuns);
+    const names = hostRuns ? (Array.isArray(body.names) ? body.names : []).slice(0, 8).map((n) => String(n ?? "")) : [];
+    if (hostRuns && names.length < 2) return fail(400, "too_few", "Name at least two players.");
+    const seatCount = hostRuns ? names.length : Math.max(2, Math.min(8, Number(body.seatCount) || 4));
     const roundsAuto = body.rounds === undefined || body.rounds === null || body.rounds === "";
     const rounds = Math.max(1, Math.min(20, Number(body.rounds) || ROUNDS_FOR[seatCount] || 15));
     const hostName = (body.name || "").trim().slice(0, 14) || "Player 1";
     for (let attempt = 0; attempt < 8; attempt++) {
       const candidate = randomCode();
-      const game = newGame({ code: candidate, hostName, seatCount, rounds, roundsAuto, clientId: body.clientId || null });
+      const game = newGame({
+        code: candidate, hostName, seatCount, rounds, roundsAuto, clientId: body.clientId || null, hostRuns, names,
+      });
       const written = await store.write(candidate, game, null);
       if (written.ok) {
+        const seatKey = hostRuns ? null : game.seats[0].key;
         return ok({
           code: candidate,
           hostKey: game.hostKey,
-          seatKey: game.seats[0].key,
-          seatIdx: 0,
-          game: publicView(game, { hostKey: game.hostKey, seatKey: game.seats[0].key }),
+          seatKey,
+          seatIdx: hostRuns ? null : 0,
+          game: publicView(game, { hostKey: game.hostKey, seatKey }),
         });
       }
     }
@@ -155,6 +163,10 @@ export async function handlePost(store, body) {
   switch (action) {
     case "rename":
       return guard((g) => applyRename(g, { idx: Number(body.idx), name: body.name }), { idx: Number(body.idx) });
+    case "addPlayer":
+      return guard((g) => applyAddPlayer(g, { name: body.name }), { hostOnly: true });
+    case "removePlayer":
+      return guard((g) => applyRemovePlayer(g, { idx: Number(body.idx) }), { hostOnly: true });
     case "start":
       return guard((g) => applyStart(g), { hostOnly: true });
     case "reorder":

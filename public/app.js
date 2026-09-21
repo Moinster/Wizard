@@ -29,11 +29,18 @@ let etag = null;
 let prevTotals = null;
 let polling = false;
 let stale = false;
-let setupDraft = { name:"", seats:4, rounds:null, names:[] };
+let setupDraft = { name:"", seats:4, rounds:null, names:[], mode:"phones" };   // mode: "phones" | "host"
 let writesInFlight = 0;    // a tap we've drawn locally but the server hasn't confirmed
 let solo = false;          // true when there's no server: the game runs in this browser
 let localApi = null;       // {store, handlePost, handleGet, sanitize} in solo mode
-let joinDraft = { name:"", code:"" };
+let joinDraft = { name:"", code:"", peek:null };   // peek: what an invite link's game looks like, before joining
+let addDraft = "";         // a name the scorekeeper is typing into the lobby
+let lastError = null;      // the error code of the last refused request, for a fallback to read
+
+/** The scorekeeper enters this seat's bids: it has no phone behind it. */
+const managed = (idx) => Boolean(game.seats[idx] && game.seats[idx].managed);
+/** Names the whole table from one device, as the solo page does. */
+const namesMode = () => solo || setupDraft.mode === "host";
 
 /*
  * Deliberate submits. A tap edits a draft on this phone and nothing goes over
@@ -120,9 +127,10 @@ function toast(msg){
 }
 
 async function api(body){
+  lastError = null;
   if (solo) {
     const out = await localApi.handlePost(localApi.store, body);
-    if (out.status !== 200) { toast(out.body.message || "That didn't work."); return null; }
+    if (out.status !== 200) { lastError = out.body.error; toast(out.body.message || "That didn't work."); return null; }
     return localApi.sanitize(out.body, { hostKey: body.hostKey, seatKey: out.body.seatKey || body.seatKey });
   }
   const res = await fetch(apiUrl("api/game"), {
@@ -131,7 +139,7 @@ async function api(body){
     body: JSON.stringify(body),
   });
   const data = await res.json().catch(() => ({}));
-  if (!res.ok) { toast(data.message || "That didn't work."); return null; }
+  if (!res.ok) { lastError = data.error || null; toast(data.message || "That didn't work."); return null; }
   return data;
 }
 
@@ -287,13 +295,23 @@ function homeHTML(){
   const n = setupDraft.seats;
   const rounds = setupDraft.rounds ?? (ROUNDS_FOR[n] || 15);
 
+  const hostMode = !solo && setupDraft.mode === "host";
   const intro = solo
     ? `<p class="lede">One phone, <em>the whole table.</em></p>
        <p class="lede-sub">Name everyone, then take the bids and the tricks round by round. Scores stay on this device \u2014 nothing is sent anywhere, and closing the tab won't lose the game.</p>`
+    : hostMode
+    ? `<p class="lede">One phone keeps score, <em>the rest can watch.</em></p>
+       <p class="lede-sub">Name everyone at the table and take the bids and the tricks round by round. Anyone with the code can follow along on their own phone and see every score as it lands.</p>`
     : `<p class="lede">Everyone bids from <em>their own phone.</em></p>
        <p class="lede-sub">Start a game, read out the four-letter code, and the table joins. Bids come in from each player; the scorekeeper counts the tricks; every phone shows every score.</p>`;
 
-  const whoField = solo
+  const modeSwitch = solo ? "" : `
+    <div class="seg" role="group" aria-label="How to run the table">
+      <button id="mode-phones" aria-pressed="${!hostMode}">Everyone on their own phone</button>
+      <button id="mode-host" aria-pressed="${hostMode}">I'll keep score for everyone</button>
+    </div>`;
+
+  const whoField = namesMode()
     ? `<div class="field">
         <label>Players</label>
         <div class="roster">${Array.from({ length: n }, (_, i) => `
@@ -308,14 +326,44 @@ function homeHTML(){
         <input id="host-name" type="text" maxlength="14" autocomplete="off" placeholder="Scorekeeper" value="${esc(setupDraft.name)}">
       </div>`;
 
+  // An invite to a table the scorekeeper runs is an invitation to watch, not
+  // to take a seat; so is one to a game that has already been dealt.
+  const peek = joinDraft.peek;
+  const followOnly = peek && (peek.hostRuns || peek.status !== "lobby");
+  const joinPanel = solo ? "" : followOnly ? `
+  <div class="panel">
+    <div class="panel-title">Follow along</div>
+    <p class="lede-sub" style="margin:0 0 12px">${peek.hostRuns
+      ? `Game <b class="num">${esc(joinDraft.code)}</b> is being scored on one phone. Follow along to see every bid and score as it lands.`
+      : `Game <b class="num">${esc(joinDraft.code)}</b> has already been dealt. You can still watch the scores as they land.`}</p>
+    <button class="btn" id="do-watch">Follow along</button>
+  </div>` : `
+  <div class="panel">
+    <div class="panel-title">Join a game</div>
+    <div class="field">
+      <label for="join-name">Your name</label>
+      <input id="join-name" type="text" maxlength="14" autocomplete="off" placeholder="Your name" value="${esc(joinDraft.name)}">
+    </div>
+    <div class="field">
+      <label for="join-code">Game code</label>
+      <input id="join-code" class="code-input num" type="text" maxlength="4" autocomplete="off"
+             autocapitalize="characters" spellcheck="false" placeholder="\u2013\u2013\u2013\u2013" value="${esc(joinDraft.code)}">
+    </div>
+    <div class="btn-row">
+      <button class="btn btn-ghost" id="do-join">Join</button>
+      <button class="btn btn-ghost" id="do-watch" title="See the scores without taking a seat">Just watch</button>
+    </div>
+  </div>`;
+
   return `
   <div>${intro}</div>
 
   <div class="panel">
-    <div class="panel-title">${solo ? "New game" : "Start a game"}</div>
+    <div class="panel-title">${solo ? "New game" : hostMode ? "Set up the table" : "Start a game"}</div>
+    ${modeSwitch}
     ${whoField}
     <div class="field">
-      <label>${solo ? "How many playing" : "Seats at the table"}</label>
+      <label>${namesMode() ? "How many playing" : "Seats at the table"}</label>
       <div class="counter">
         <button class="round-btn" id="s-minus" ${n<=2?"disabled":""} aria-label="One seat fewer">&minus;</button>
         <span class="counter-val num">${n}</span>
@@ -334,23 +382,9 @@ function homeHTML(){
         <span class="counter-note">Round 1 deals one card each and every round adds one.</span>
       </div>
     </div>
-    <button class="btn" id="do-create">${solo ? "Start scoring" : "Start a game"}</button>
+    <button class="btn" id="do-create">${solo ? "Start scoring" : hostMode ? "Seat the table" : "Start a game"}</button>
   </div>
-
-  ${solo ? "" : `
-  <div class="panel">
-    <div class="panel-title">Join a game</div>
-    <div class="field">
-      <label for="join-name">Your name</label>
-      <input id="join-name" type="text" maxlength="14" autocomplete="off" placeholder="Your name" value="${esc(joinDraft.name)}">
-    </div>
-    <div class="field">
-      <label for="join-code">Game code</label>
-      <input id="join-code" class="code-input num" type="text" maxlength="4" autocomplete="off"
-             autocapitalize="characters" spellcheck="false" placeholder="––––" value="${esc(joinDraft.code)}">
-    </div>
-    <button class="btn btn-ghost" id="do-join">Join</button>
-  </div>`}`;
+  ${joinPanel}`;
 }
 
 /* ---- lobby ---- */
@@ -396,6 +430,7 @@ function lobbyHTML(){
   const host = game.isHost;
   const sv = seatView();
 
+  const hostRuns = Boolean(game.hostRuns);
   const rows = sv.order.map((idx, pos) => {
     const s = game.seats[idx];
     const deals = idx === sv.dealerSeat;
@@ -403,6 +438,7 @@ function lobbyHTML(){
       <span class="seat-pip">${pos + 1}</span>
       <span class="roster-name">${esc(s.name)}</span>
       ${idx === game.youIdx ? '<span class="badge">You</span>' : ""}
+      ${s.managed && !hostRuns ? '<span class="badge quiet">No phone</span>' : ""}
       ${deals ? '<span class="badge gold">Deals first</span>' : ""}
       ${host ? `
         <button class="mini" data-dealer="${idx}" ${deals ? "disabled" : ""}
@@ -410,16 +446,30 @@ function lobbyHTML(){
         <button class="mini" data-move="up" data-idx="${idx}" ${pos === 0 ? "disabled" : ""}
           aria-label="Move ${esc(s.name)} earlier">↑</button>
         <button class="mini" data-move="down" data-idx="${idx}" ${pos >= sv.order.length - 1 ? "disabled" : ""}
-          aria-label="Move ${esc(s.name)} later">↓</button>` : ""}
+          aria-label="Move ${esc(s.name)} later">↓</button>
+        ${s.managed ? `<button class="mini" data-remove="${idx}" ${sv.dirty ? "disabled" : ""}
+          aria-label="Remove ${esc(s.name)}" title="Remove ${esc(s.name)}">✕</button>` : ""}` : ""}
     </div>`;
-  }).concat(game.seats.filter((s) => !s.joined).map((s, k) => `<div class="roster-row">
+  }).concat(hostRuns ? [] : game.seats.filter((s) => !s.joined).map((s, k) => `<div class="roster-row">
       <span class="seat-pip empty">${sv.order.length + k + 1}</span>
       <span class="roster-name empty">waiting…</span>
       <span class="badge quiet">Open</span>
     </div>`)).join("");
 
+  // The scorekeeper can seat someone who has no phone; their bids are then
+  // the scorekeeper's to enter. A table the host runs is seated this way only.
+  const room = hostRuns ? game.seats.length < 8 : (game.seats.some((s) => !s.joined) || game.seats.length < 8);
+  const addRow = host && room && !sv.dirty ? `
+    <div class="add-row">
+      <input id="add-name" type="text" maxlength="14" autocomplete="off" aria-label="Name of the player to add"
+        placeholder="${hostRuns ? "Add a player" : "Add someone without a phone"}" value="${esc(addDraft)}">
+      <button class="btn" id="do-add" ${addDraft.trim() ? "" : "disabled"}>Add</button>
+    </div>` : "";
+
   const orderNote = host
     ? `Put the list in the order you're sitting, clockwise, and mark who deals first. Nothing changes for the table until you <b>save</b>.`
+    : game.youIdx === null
+    ? `You're following along: the scorekeeper enters every bid and score, and this phone shows them as they land.`
     : `Play goes down this list, clockwise. The deal starts with <b>Deals first</b> and moves one seat each round.`;
 
   const saveBar = host && sv.dirty ? `
@@ -435,7 +485,7 @@ function lobbyHTML(){
     <div class="code-hero">
       <div class="kicker">Point a camera at it, or type the code</div>
       <div class="code num">${esc(game.code)}</div>
-      <div class="hint">Anyone with the link can join an open seat.</div>
+      <div class="hint">${hostRuns ? "Anyone with the link can follow along." : "Anyone with the link can join an open seat, or just watch."}</div>
     </div>
     <div class="btn-row" style="margin-top:12px">
       <button class="btn btn-ghost" id="copy-link">Copy link</button>
@@ -445,8 +495,9 @@ function lobbyHTML(){
   </div>
 
   <div class="panel${sv.dirty ? " editing" : ""}">
-    <div class="panel-title">${joined} of ${game.seats.length} seats · deal order</div>
+    <div class="panel-title">${hostRuns ? `${joined} player${joined === 1 ? "" : "s"}` : `${joined} of ${game.seats.length} seats`} · deal order</div>
     <div class="roster">${rows}</div>
+    ${addRow}
     <p class="opt-note">${orderNote}</p>
     ${sv.dirty ? "" : (sent && sent.key === stateKey(game) ? `<p class="opt-note">${sentHTML()}</p>` : "")}
   </div>
@@ -561,15 +612,18 @@ function roundHTML(){
   };
 
   let mine = "";
-  if (isBid && solo) {
+  if (isBid && (solo || (game.hostRuns && game.isHost))) {
     // One device holds the whole table. Under in-turn bidding it enters bids
-    // in order, so only the seat that is due gets chips.
-    const seats = inTurn ? (due === null ? [] : [due]) : game.order;
+    // in order, so only the seat that is due gets chips -- and the last bid
+    // stays open, since a slip of the thumb is the scorekeeper's to fix.
+    const last = inTurn ? lastBidder() : null;
+    const seats = inTurn ? [due, last].filter((i) => i !== null) : game.order;
     mine = `<div class="panel"><div class="panel-title">Bids — ${bidsIn()} of ${game.seats.length} in</div>${
       seats.map((idx) => `<div class="entry">
           <div class="entry-head"><span class="entry-name">${esc(game.seats[idx].name)}</span>
             ${idx === game.dealer ? '<span class="badge quiet">Dealer</span>' : ""}
-            ${inTurn ? '<span class="badge live">Bidding</span>' : ""}</div>
+            ${inTurn && idx === due ? '<span class="badge live">Bidding</span>' : ""}
+            ${inTurn && idx === last ? '<span class="badge quiet">Can still change</span>' : ""}</div>
           <div class="chips small">${chipsFor("forbid", idx, game.bids[idx], game.seats[idx].name + " bids")}</div>
         </div>`).join("") || `<p class="lede-sub">Every bid is in.</p>`}</div>`;
   } else if (isBid && game.youIdx !== null) {
@@ -639,15 +693,22 @@ function roundHTML(){
     hostPanel = `<div class="panel"><div class="panel-title">Tricks taken — enter everyone, then score</div>${hostPanel}</div>`;
   }
 
-  // Host can fill in a bid for a player whose phone died. Under in-turn
-  // bidding only the seat that is due can be filled in.
+  // The scorekeeper enters bids for a seat with no phone behind it, and can
+  // fill in for a phone that died. Under in-turn bidding only the seat that
+  // is due can be filled in.
   let fillIn = "";
-  if (game.isHost && isBid && !solo && !allBidsIn()) {
+  if (game.isHost && isBid && !solo && !game.hostRuns && !allBidsIn()) {
     const missing = game.order.filter((i) => typeof game.bids[i] !== "number" && i !== game.youIdx && (!inTurn || i === due));
-    if (missing.length) {
-      fillIn = `<details class="history"><summary>Enter a bid for someone</summary>
-        <div style="padding:0 16px 14px">${missing.map((idx) => `<div class="entry"><div class="entry-head"><span class="entry-name">${esc(game.seats[idx].name)}</span></div>
-            <div class="chips small">${chipsFor("forbid", idx, undefined, game.seats[idx].name + " bids")}</div></div>`).join("")}</div></details>`;
+    const entryFor = (idx) => `<div class="entry"><div class="entry-head"><span class="entry-name">${esc(game.seats[idx].name)}</span>
+        ${inTurn ? '<span class="badge live">Bidding</span>' : ""}</div>
+        <div class="chips small">${chipsFor("forbid", idx, undefined, game.seats[idx].name + " bids")}</div></div>`;
+    const noPhone = missing.filter(managed), others = missing.filter((i) => !managed(i));
+    if (noPhone.length) {
+      fillIn += `<div class="panel"><div class="panel-title">Bids you enter</div>${noPhone.map(entryFor).join("")}</div>`;
+    }
+    if (others.length) {
+      fillIn += `<details class="history"><summary>Enter a bid for someone</summary>
+        <div style="padding:0 16px 14px">${others.map(entryFor).join("")}</div></details>`;
     }
   }
 
@@ -672,7 +733,7 @@ function roundHTML(){
       <div class="tally"><span class="pill${allBidsIn()&&hookDiff===0?" warn":""}">${status}</span></div>
       ${game.isHost
         ? `<button class="btn" id="to-tricks" ${allBidsIn()?"":"disabled"}>${allBidsIn()?"Close bidding — count the tricks →":"Every bid has to be in"}</button>`
-        : `<div class="waiting" style="justify-content:center"><span class="dot"></span>${allBidsIn()?"All bids in — play the hand":"Bidding"}</div>`}
+        : `<div class="waiting" style="justify-content:center"><span class="dot"></span>${allBidsIn()?"All bids in — play the hand":game.youIdx === null ? "Following along — bidding" : "Bidding"}</div>`}
       ${connHTML()}
     </div>`;
   } else {
@@ -754,6 +815,13 @@ function wire(){
     if (el.id === "join-name") joinDraft.name = el.value;
     if (el.id === "join-code") { joinDraft.code = el.value.toUpperCase(); el.value = joinDraft.code; }
     if (el.dataset.seatName !== undefined) setupDraft.names[Number(el.dataset.seatName)] = el.value;
+    if (el.id === "add-name") {
+      addDraft = el.value;
+      const btn = $("do-add"); if (btn) btn.disabled = !addDraft.trim();
+    }
+  };
+  main.onkeydown = (e) => {
+    if (e.key === "Enter" && e.target.id === "add-name") { e.preventDefault(); const btn = $("do-add"); if (btn && !btn.disabled) btn.click(); }
   };
 
   main.onclick = async (e) => {
@@ -761,6 +829,10 @@ function wire(){
     if (!b || b.disabled) return;
 
     // --- home ---
+    if (b.id === "mode-phones" || b.id === "mode-host") {
+      setupDraft.mode = b.id === "mode-host" ? "host" : "phones";
+      return render();
+    }
     if (b.id === "s-minus" || b.id === "s-plus") {
       setupDraft.seats = Math.max(2, Math.min(8, setupDraft.seats + (b.id === "s-plus" ? 1 : -1)));
       setupDraft.rounds = null;
@@ -773,6 +845,21 @@ function wire(){
     }
     if (b.id === "do-create") return whileBusy("do-create", "Starting\u2026", create);
     if (b.id === "do-join")  return whileBusy("do-join", "Joining\u2026", join);
+    if (b.id === "do-watch") return whileBusy("do-watch", "Opening\u2026", () => watch(joinDraft.code));
+
+    // --- lobby: seating someone without a phone ---
+    if (b.id === "do-add") {
+      const name = addDraft.trim();
+      if (!name) return;
+      return whileBusy("do-add", "Adding\u2026", async () => {
+        const data = await act({ action:"addPlayer", name }, `${name} added`);
+        if (data) { addDraft = ""; render(); const el = $("add-name"); if (el) el.focus(); }
+      });
+    }
+    if (b.dataset.remove !== undefined) {
+      const idx = Number(b.dataset.remove);
+      return act({ action:"removePlayer", idx });
+    }
 
     // --- lobby ---
     if (b.id === "copy-link") {
@@ -908,11 +995,15 @@ function optimistic(apply, body){
 
 async function create(){
   if (solo) return createSolo();
+  const hostRuns = setupDraft.mode === "host";
+  const names = Array.from({ length: setupDraft.seats }, (_, i) =>
+    (setupDraft.names[i] || "").trim() || `Player ${i + 1}`);
   const data = await api({
     action:"create",
-    name: setupDraft.name,
     clientId: clientId(),
-    seatCount: setupDraft.seats,
+    ...(hostRuns
+      ? { hostRuns: true, names }
+      : { name: setupDraft.name, seatCount: setupDraft.seats }),
     ...(setupDraft.rounds === null ? {} : { rounds: setupDraft.rounds }),
   });
   if (!data) return;
@@ -920,6 +1011,26 @@ async function create(){
   etag = null; adopt({ game:data.game });
   history.replaceState(null, "", `?g=${data.code}`);
   startPolling();
+}
+
+/**
+ * Follow a table without taking a seat: the scorekeeper's, or one already
+ * dealt. Reading needs no key, so this is a session with only a code.
+ */
+async function watch(code){
+  code = (code || "").trim().toUpperCase();
+  if (code.length !== 4) return toast("A game code is four letters.");
+  try {
+    const res = await fetch(`${apiUrl("api/game")}?${new URLSearchParams({ code })}`, { cache:"no-store" });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) return toast(data.message || "That didn't work.");
+    saveSession({ code });
+    etag = null; adopt(data);
+    history.replaceState(null, "", `?g=${code}`);
+    startPolling();
+  } catch {
+    toast("Couldn't reach the server.");
+  }
 }
 
 /** With no server there is nobody to wait for: seat everyone and deal. */
@@ -956,7 +1067,11 @@ async function join(){
   const code = (joinDraft.code || "").trim().toUpperCase();
   if (code.length !== 4) return toast("A game code is four letters.");
   const data = await api({ action:"join", code, name: joinDraft.name, clientId: clientId() });
-  if (!data) return;
+  if (!data) {
+    // No seat to be had, but the scores are there to see.
+    if (lastError === "host_runs" || lastError === "already_started") return watch(code);
+    return;
+  }
   saveSession({ code, seatKey:data.seatKey, seatIdx:data.seatIdx });
   etag = null; adopt({ game:data.game });
   history.replaceState(null, "", `?g=${code}`);
@@ -1037,7 +1152,10 @@ function openRules(){
 
       <h3>Around the table</h3>
       <ul>
+        <li><b>Two ways to run it.</b> Everyone bids on their own phone, or one phone keeps score for the whole table and the rest follow along. Choose when you start.</li>
         <li>Everyone bids on their own phone: pick a number, then <b>confirm</b> it. Under in-turn bidding the table waits for whoever is up, and their phone says so.</li>
+        <li>Someone without a phone? The scorekeeper can seat them in the lobby and enter their bids each round.</li>
+        <li><b>Just watch</b> or <b>Follow along</b> opens a game read-only: every bid and score as it lands, nothing to tap.</li>
         <li>The scorekeeper enters every player's tricks, checks the total, and scores the round in one go.</li>
         <li>The <b>scorekeeper</b> — whoever started the game — sets trump, closes bidding, enters the tricks taken and scores the round.</li>
         <li>Tricks taken must total the cards dealt, so a round won't score until they do.</li>
@@ -1069,6 +1187,14 @@ document.addEventListener("keydown", (e) => {
     // Arriving on someone else's invite: drop a stale session and prefill.
     session = null;
     joinDraft.code = deepCode;
+    // One look at the game decides what the invite offers: a seat, or a view.
+    if (!solo) {
+      try {
+        const res = await fetch(`${apiUrl("api/game")}?${new URLSearchParams({ code: deepCode })}`, { cache:"no-store" });
+        const data = res.ok ? await res.json() : null;
+        if (data && data.game) joinDraft.peek = { hostRuns: Boolean(data.game.hostRuns), status: data.game.status };
+      } catch {}
+    }
   }
   render();
   if (session) {

@@ -392,5 +392,76 @@ const playRound = async (t, bids, tricks) => {
     (await post({ action: "seating", code: t.code, hostKey: t.hostKey, dealerStart: 0 })).body.error, "already_started");
 }
 
+// ---- the scorekeeper runs the whole table from one phone ------------------------
+{
+  eq("naming one player is not a table",
+    (await post({ action: "create", hostRuns: true, names: ["Solo"] })).body.error, "too_few");
+
+  const made = await post({ action: "create", hostRuns: true, names: ["Ana", " Ben ", ""], rounds: 3 });
+  eq("a host-run game is created", made.status, 200);
+  const h = { code: made.body.code, hostKey: made.body.hostKey };
+  eq("the scorekeeper holds no seat", [made.body.seatKey, made.body.seatIdx], [null, null]);
+  const g0 = made.body.game;
+  eq("the view says the host runs it", g0.hostRuns, true);
+  eq("everyone named is seated, tidied, with a name for the blank", g0.seats.map((s) => s.name), ["Ana", "Ben", "Player 3"]);
+  eq("and every seat is the scorekeeper's to fill in", g0.seats.map((s) => s.managed), [true, true, true]);
+  eq("the deal is sized to the table", g0.rounds, 3);
+
+  eq("nobody can join a host-run table", (await post({ action: "join", code: h.code, name: "Dee" })).body.error, "host_runs");
+  const follower = await get({ code: h.code });
+  eq("but anyone with the code can follow along", follower.status, 200);
+  eq("as nobody in particular", [follower.body.game.isHost, follower.body.game.youIdx], [false, null]);
+
+  eq("a follower cannot add a player", (await post({ action: "addPlayer", code: h.code, name: "Dee" })).body.error, "not_allowed");
+  const added = await post({ action: "addPlayer", code: h.code, hostKey: h.hostKey, name: "Dee" });
+  eq("the scorekeeper adds a player in the lobby", [added.status, added.body.seatIdx], [200, 3]);
+  eq("who takes the next seat", (await get({ code: h.code })).body.game.seats.map((s) => s.name), ["Ana", "Ben", "Player 3", "Dee"]);
+  for (const n of ["E", "F", "G", "H"]) await post({ action: "addPlayer", code: h.code, hostKey: h.hostKey, name: n });
+  eq("eight is the most", (await post({ action: "addPlayer", code: h.code, hostKey: h.hostKey, name: "Nine" })).body.error, "full");
+  for (const idx of [7, 6, 5, 4]) await post({ action: "removePlayer", code: h.code, hostKey: h.hostKey, idx });
+  eq("and removed again", (await get({ code: h.code })).body.game.seats.map((s) => s.name), ["Ana", "Ben", "Player 3", "Dee"]);
+
+  await post({ action: "seating", code: h.code, hostKey: h.hostKey, dealerStart: 2 });
+  await post({ action: "removePlayer", code: h.code, hostKey: h.hostKey, idx: 1 });
+  const g1 = (await get({ code: h.code, hostKey: h.hostKey })).body.game;
+  eq("removing someone closes their seat and renumbers", g1.seats.map((s) => [s.idx, s.name]), [[0, "Ana"], [1, "Player 3"], [2, "Dee"]]);
+  eq("and the first dealer is still the same person", g1.seats[g1.dealerStart].name, "Player 3");
+
+  eq("it starts like any table", (await post({ action: "start", code: h.code, hostKey: h.hostKey })).status, 200);
+  eq("no more adding once dealt", (await post({ action: "addPlayer", code: h.code, hostKey: h.hostKey, name: "Late" })).body.error, "already_started");
+  const g2 = (await get({ code: h.code, hostKey: h.hostKey })).body.game;
+  eq("bidding is in turn, from the dealer's left", [g2.inTurn, g2.nextToBid], [true, 2]);
+  eq("the scorekeeper enters the bid that is due", (await post({ action: "bid", code: h.code, hostKey: h.hostKey, idx: 2, value: 1, round: 1 })).status, 200);
+  eq("but not one out of turn", (await post({ action: "bid", code: h.code, hostKey: h.hostKey, idx: 1, value: 0, round: 1 })).body.error, "not_your_turn");
+  eq("a follower cannot bid", (await post({ action: "bid", code: h.code, idx: 0, value: 0, round: 1 })).body.error, "not_allowed");
+  await post({ action: "bid", code: h.code, hostKey: h.hostKey, idx: 0, value: 0, round: 1 });
+  await post({ action: "bid", code: h.code, hostKey: h.hostKey, idx: 1, value: 0, round: 1 });
+  await post({ action: "toTricks", code: h.code, hostKey: h.hostKey });
+  const scored = await post({ action: "scoreRound", code: h.code, hostKey: h.hostKey, round: 1, tricks: { 0: 0, 1: 0, 2: 1 } });
+  eq("and scores the round", [scored.status, (await get({ code: h.code, hostKey: h.hostKey })).body.game.totals], [200, [20, 20, 30]]);
+  eq("which every follower sees", (await get({ code: h.code })).body.game.totals, [20, 20, 30]);
+}
+
+// ---- a phones table can seat someone with no phone ------------------------------
+{
+  const made = await post({ action: "create", name: "Host", seatCount: 3, rounds: 2 });
+  const h = { code: made.body.code, hostKey: made.body.hostKey, seatKey: made.body.seatKey };
+  const j = await post({ action: "join", code: h.code, name: "Phone" });
+  const added = await post({ action: "addPlayer", code: h.code, hostKey: h.hostKey, name: "Gran" });
+  eq("the no-phone player takes the open seat", [added.status, added.body.seatIdx], [200, 2]);
+  const g = (await get({ code: h.code, hostKey: h.hostKey })).body.game;
+  eq("and is the only managed seat", g.seats.map((s) => s.managed), [false, false, true]);
+  eq("the game is still a phones game", g.hostRuns, false);
+  eq("a phone's seat cannot be removed by the host", (await post({ action: "removePlayer", code: h.code, hostKey: h.hostKey, idx: 1 })).body.error, "has_phone");
+  eq("the table is full", (await post({ action: "join", code: h.code, name: "Late" })).body.error, "full");
+  await post({ action: "removePlayer", code: h.code, hostKey: h.hostKey, idx: 2 });
+  eq("removing the no-phone player opens the seat again", (await get({ code: h.code })).body.game.seats[2].joined, false);
+  await post({ action: "addPlayer", code: h.code, hostKey: h.hostKey, name: "Gran" });
+  await post({ action: "settings", code: h.code, hostKey: h.hostKey, bidding: "open" });
+  await post({ action: "start", code: h.code, hostKey: h.hostKey });
+  eq("the scorekeeper bids for the no-phone player", (await post({ action: "bid", code: h.code, hostKey: h.hostKey, idx: 2, value: 0, round: 1 })).status, 200);
+  eq("and the phone still bids for itself", (await post({ action: "bid", code: h.code, seatKey: j.body.seatKey, idx: 1, value: 1, round: 1 })).status, 200);
+}
+
 console.log(`${pass} passed, ${fails.length} failed`);
 if (fails.length) { console.log("\n" + fails.join("\n")); process.exit(1); }

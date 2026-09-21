@@ -140,20 +140,34 @@ export function randomKey() {
   return out;
 }
 
-export function newGame({ code, hostName, seatCount, rounds, roundsAuto = true, clientId = null }) {
-  const seats = Array.from({ length: seatCount }, (_, i) => ({
-    idx: i,
-    name: i === 0 ? hostName : "",
-    key: i === 0 ? randomKey() : null,
-    joined: i === 0,
-    clientId: i === 0 ? clientId : null,
-  }));
+/**
+ * A seat is either a phone's (it has a key) or the scorekeeper's to fill in
+ * (it has none). A game the host runs seats everyone the second way from the
+ * start: the host names the table, nobody joins, and other phones can only
+ * follow along.
+ */
+const cleanName = (name, idx) => (name || "").trim().slice(0, 14) || `Player ${idx + 1}`;
+export const managedSeat = (idx, name) => ({
+  idx, name: cleanName(name, idx), key: null, joined: true, clientId: null,
+});
+
+export function newGame({ code, hostName, seatCount, rounds, roundsAuto = true, clientId = null, hostRuns = false, names = [] }) {
+  const seats = hostRuns
+    ? names.map((n, i) => managedSeat(i, n))
+    : Array.from({ length: seatCount }, (_, i) => ({
+        idx: i,
+        name: i === 0 ? hostName : "",
+        key: i === 0 ? randomKey() : null,
+        joined: i === 0,
+        clientId: i === 0 ? clientId : null,
+      }));
   return {
     code,
     v: 1,
     createdAt: Date.now(),
     updatedAt: Date.now(),
     status: "lobby",
+    hostRuns: Boolean(hostRuns),
     rounds,
     roundsAuto,
     settings: { ...DEFAULT_SETTINGS },
@@ -181,12 +195,15 @@ export function publicView(game, { hostKey, seatKey } = {}) {
     code: game.code,
     v: game.v,
     status: game.status,
+    hostRuns: Boolean(game.hostRuns),
     rounds: game.rounds,
     round: game.round,
     cards: cardsFor(game.round),
     phase: game.phase,
     trump: game.trump,
-    seats: game.seats.map((s) => ({ idx: s.idx, name: s.name, joined: s.joined })),
+    // `managed`: a seat with no phone behind it, so the scorekeeper enters
+    // its bids. Never the key itself.
+    seats: game.seats.map((s) => ({ idx: s.idx, name: s.name, joined: s.joined, managed: Boolean(s.joined && !s.key) })),
     bids: visibleBids(game, youIdx),
     // Who has bid, which stays true even when the values are hidden.
     bidPlaced: Object.keys(game.bids).map(Number),
@@ -226,6 +243,7 @@ function visibleBids(game, youIdx) {
 // ---------------------------------------------------------------------------
 
 export function applyJoin(g, { name, clientId }) {
+  if (g.hostRuns) return { error: "host_runs", message: "The scorekeeper runs this table. You can follow along." };
   if (g.status !== "lobby") return { error: "already_started", message: "That game has already started." };
 
   // Joining has to be idempotent per device. A slow first tap invites a second
@@ -248,6 +266,43 @@ export function applyJoin(g, { name, clientId }) {
   seat.key = randomKey();
   seat.clientId = clientId || null;
   return { seatIdx: seat.idx, seatKey: seat.key };
+}
+
+/**
+ * The scorekeeper seats someone who has no phone: an open seat if there is
+ * one, a new one otherwise, up to the table's limit. Their bids are the
+ * scorekeeper's to enter.
+ */
+export function applyAddPlayer(g, { name }) {
+  if (g.status !== "lobby") return { error: "already_started", message: "That game has already started." };
+  const open = g.seats.find((s) => !s.joined);
+  if (open) {
+    Object.assign(open, managedSeat(open.idx, name));
+    return { seatIdx: open.idx };
+  }
+  if (g.seats.length >= 8) return { error: "full", message: "Eight is the most the game can seat." };
+  const seat = managedSeat(g.seats.length, name);
+  g.seats.push(seat);
+  return { seatIdx: seat.idx };
+}
+
+/** Take a no-phone player back out of the lobby. A phone's seat is its own. */
+export function applyRemovePlayer(g, { idx }) {
+  if (g.status !== "lobby") return { error: "already_started", message: "That game has already started." };
+  const seat = g.seats[idx];
+  if (!seat || !seat.joined) return { error: "no_seat", message: "Nobody is sitting there." };
+  if (seat.key) return { error: "has_phone", message: `${seat.name} joined from their own phone.` };
+  if (g.hostRuns) {
+    // These seats exist only for the people in them, so the seat goes too,
+    // and the first dealer is found again by who they are.
+    const dealer = g.seats[g.dealerStart];
+    g.seats = g.seats.filter((s) => s.idx !== idx).map((s, i) => ({ ...s, idx: i }));
+    const at = dealer && dealer.idx !== idx ? g.seats.findIndex((s) => s.name === dealer.name) : -1;
+    g.dealerStart = at === -1 ? 0 : at;
+  } else {
+    Object.assign(seat, { name: "", key: null, joined: false, clientId: null });
+    if (g.dealerStart === idx) g.dealerStart = (g.seats.find((s) => s.joined) || { idx: 0 }).idx;
+  }
 }
 
 export function applyRename(g, { idx, name }) {

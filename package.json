@@ -8,7 +8,7 @@
   "scripts": {
     "start": "node server.js",
     "test": "node test/run.mjs && node test/qr.mjs && node test/vercel.mjs && node test/blob.mjs && node test/supabase.mjs && node test/contention.mjs",
-    "test:browser": "node test/browser.mjs && node test/static.mjs && node test/latency.mjs && node test/lobby.mjs"
+    "test:browser": "node test/browser.mjs && node test/static.mjs && node test/latency.mjs && node test/lobby.mjs && node test/hostrun.mjs"
   },
   "devDependencies": {
     "playwright": "^1.47.0"

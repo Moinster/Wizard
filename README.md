@@ -61,6 +61,20 @@ Pass a port as an argument if 3000 is busy: `node server.js 8080`.
 The scorekeeper can also enter a bid for someone whose phone died, undo the last
 round, and start a rematch with the same table.
 
+### One phone keeps score, the rest follow along
+
+The other way to run a table: on the start screen choose **I'll keep score for
+everyone**, name the players, and seat the table. Nobody joins. The scorekeeper
+takes every bid and every trick count from their own phone, one seat at a time
+under in-turn bidding, exactly as the one-device page does — and anyone with
+the code or the link can **follow along**: a read-only view of every bid and
+score as it lands, with nothing to tap.
+
+The two ways mix. In a phones game the scorekeeper can seat someone without a
+phone from the lobby (**Add someone without a phone**) and enters their bids
+each round; and anyone can open a phones game with **Just watch** instead of
+taking a seat.
+
 **Scoring** defaults to the standard rule: hit your bid exactly for
 `20 + 10 × bid`, or lose `10` per trick over or under. Round 1 deals one card
 each and every round adds one, until the 60-card deck runs out — 20 rounds for

@@ -69,9 +69,12 @@ const mira = await seatOf('Mira');
 for (let k = 0; k < 3; k++) {
   const idx = await pg.$eval('.chip[data-forbid]', (e) => +e.dataset.idx);
   await pg.click(`.chip[data-forbid="${idx === mira ? 1 : 0}"][data-idx="${idx}"]`);
+  // The seat that is due comes first; the last bid stays open below it in
+  // case of a slip, which is why "every bid is in" is also a way out here.
   await pg.waitForFunction((prev) => {
     const c = document.querySelector('.chip[data-forbid]');
-    return !c || +c.dataset.idx !== prev;
+    const t = document.querySelector('#to-tricks');
+    return (t && !t.disabled) || !c || +c.dataset.idx !== prev;
   }, idx, { timeout: 8000 });
 }
 await pg.waitForFunction(() => { const x = document.querySelector('#to-tricks'); return x && !x.disabled; }, null, { timeout: 8000 });
