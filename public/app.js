@@ -54,6 +54,7 @@ let trickDraft = {};       // the scorekeeper's sheet, seat -> tricks, before su
 let seatDraft = null;      // host's lobby arrangement, or null when it mirrors the server
 let lastSyncAt = 0;        // when the server last confirmed the board we are showing
 let sent = null;           // {key, text}: a confirmation shown until the table moves on
+let closed = false;        // the scorekeeper closed a finished table; the final board stays up
 
 /** One string for "where the game is", so a confirmation knows when to go. */
 const stateKey = (g) => (g ? `${g.status}:${g.round}:${g.phase}` : "");
@@ -154,7 +155,12 @@ async function poll(force = false){
   if (session.seatKey) q.set("seatKey", session.seatKey);
   try {
     const res = await fetch(`${apiUrl("api/game")}?${q}`, { cache:"no-store" });
-    if (res.status === 404) { toast("That game is gone."); saveSession(null); game = null; render(); return; }
+    if (res.status === 404) {
+      // A finished table the scorekeeper closed: keep the final board up
+      // and stop asking. Anything else vanishing really is gone.
+      if (game && game.status === "done") { closed = true; polling = false; render(); return; }
+      toast("That game is gone."); saveSession(null); game = null; render(); return;
+    }
     // Anything else that isn't ok is the server failing to read, not the game
     // ending. Show it as a connection blip so the next poll can recover, and
     // never claim we are up to date on the strength of an error.
@@ -260,11 +266,13 @@ function render(){
  */
 function syncLabel(){
   if (!game) return "";
+  if (closed) return "Table closed";
   if (game.status === "lobby") return `Lobby \u00b7 ${game.seats.filter((x) => x.joined).length} of ${game.seats.length} seated`;
   if (game.status === "done") return "Final";
   return `Round ${game.round} \u00b7 ${game.phase === "bid" ? "Bidding" : "Counting tricks"}`;
 }
 function syncAgo(){
+  if (closed) return "final";
   if (stale) return "reconnecting\u2026";
   if (!lastSyncAt) return "";
   const s = Math.max(0, Math.round((Date.now() - lastSyncAt) / 1000));
@@ -771,7 +779,13 @@ function winnerHTML(){
     <div class="btn-row" style="margin-top:14px">
       <button class="btn" id="btn-table-2">Show the table</button>
       ${game.isHost ? '<button class="btn btn-ghost" id="do-rematch">Rematch</button>' : ""}
+      ${game.isHost ? '<button class="btn btn-ghost" id="do-end">Close the table</button>' : ""}
     </div>
+    ${game.isHost
+      ? '<p class="opt-note">Closing the table erases the game. Nothing is kept once everyone has seen the scores.</p>'
+      : closed
+      ? '<p class="opt-note">The scorekeeper has closed the table. These scores stay on your screen until you leave.</p>'
+      : ""}
   </div>`;
 }
 
@@ -938,6 +952,12 @@ function wire(){
     if (b.id === "back-bids")  return act({ action:"backToBids" });
     if (b.id === "do-undo")    return act({ action:"undo" });
     if (b.id === "do-rematch") return act({ action:"rematch" });
+    if (b.id === "do-end") {
+      return whileBusy("do-end", "Closing…", async () => {
+        const data = await act({ action:"end" });
+        if (data) { leave(); toast("Table closed"); }
+      });
+    }
     if (b.id === "btn-table-2") return openTable();
   };
 }
@@ -1080,7 +1100,7 @@ async function join(){
 
 function leave(){
   saveSession(null);
-  game = null; etag = null; prevTotals = null;
+  game = null; etag = null; prevTotals = null; closed = false;
   history.replaceState(null, "", location.pathname);
   render();
 }

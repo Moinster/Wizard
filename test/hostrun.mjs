@@ -50,6 +50,14 @@ check('no open seats are shown', await host.$('.roster-name.empty'), null);
 check('the link invites people to follow along', (await text(host, '.code-hero .hint')).includes('follow along'), true);
 
 // ---- adding and removing in the lobby ---------------------------------------
+{
+  // The Add button once inherited the full-width primary style and squeezed
+  // the name field to a sliver; the field has to be the wide one.
+  const field = await host.$eval('#add-name', (e) => e.getBoundingClientRect().width);
+  const button = await host.$eval('#do-add', (e) => e.getBoundingClientRect().width);
+  check('the name field is wider than its Add button', field > button * 1.5, true);
+  check('and the field is wide enough to read a name in', field > 150, true);
+}
 await host.fill('#add-name', 'Dee');
 await host.press('#add-name', 'Enter');
 await host.waitForFunction(() => document.querySelectorAll('.roster-name:not(.empty)').length === 4, null, { timeout: 8000 });

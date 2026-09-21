@@ -31,6 +31,11 @@ $$;
 -- Create (p_version null) or replace the game if p_version still holds.
 -- Returns the new version, or null when the write lost: someone else wrote
 -- first, or a create found the code taken.
+--
+-- Games exist only while they are being played. Every create sweeps out
+-- what nobody closed: a finished game an hour on, or any game untouched
+-- for a day. No cron, no extra service; the table stays the size of the
+-- evening's play.
 create or replace function public.wizard_write(p_code text, p_data jsonb, p_version bigint)
 returns bigint
 language plpgsql
@@ -41,6 +46,9 @@ declare
   v bigint;
 begin
   if p_version is null then
+    delete from public.wizard_games
+      where updated_at < now() - interval '24 hours'
+         or (data->>'status' = 'done' and updated_at < now() - interval '1 hour');
     insert into public.wizard_games (code, data)
       values (p_code, p_data)
       on conflict (code) do nothing
@@ -55,7 +63,20 @@ begin
 end;
 $$;
 
+-- The scorekeeper closing a finished table. True if there was one to close.
+create or replace function public.wizard_delete(p_code text)
+returns boolean
+language sql
+security definer
+set search_path = public
+as $$
+  with gone as (delete from public.wizard_games where code = p_code returning 1)
+  select count(*) > 0 from gone;
+$$;
+
 revoke execute on function public.wizard_read(text) from public;
 revoke execute on function public.wizard_write(text, jsonb, bigint) from public;
+revoke execute on function public.wizard_delete(text) from public;
 grant execute on function public.wizard_read(text) to anon, service_role;
 grant execute on function public.wizard_write(text, jsonb, bigint) to anon, service_role;
+grant execute on function public.wizard_delete(text) to anon, service_role;

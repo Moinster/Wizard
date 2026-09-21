@@ -442,6 +442,18 @@ const playRound = async (t, bids, tricks) => {
   eq("which every follower sees", (await get({ code: h.code })).body.game.totals, [20, 20, 30]);
 }
 
+// ---- a game exists only while it is played -------------------------------------
+{
+  const t = await table(3, 1, ["A", "B", "C"]);
+  eq("nobody but the scorekeeper can close a table",
+    (await post({ action: "end", code: t.code, seatKey: t.seats[1].seatKey })).body.error, "host_only");
+  eq("nor a stranger", (await post({ action: "end", code: t.code })).body.error, "not_allowed");
+  okTrue("so it is still there", (await get({ code: t.code })).status === 200);
+  eq("the scorekeeper closes it", (await post({ action: "end", code: t.code, hostKey: t.hostKey })).body.ended, true);
+  eq("and it is gone, not archived", (await get({ code: t.code })).status, 404);
+  eq("closing it again is a missing game", (await post({ action: "end", code: t.code, hostKey: t.hostKey })).status, 404);
+}
+
 // ---- a phones table can seat someone with no phone ------------------------------
 {
   const made = await post({ action: "create", name: "Host", seatCount: 3, rounds: 2 });

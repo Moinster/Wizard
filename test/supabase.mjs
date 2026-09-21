@@ -40,6 +40,7 @@ function fakeRest({ flaky = 0, refuse = 0, dropConnections = 0, latencyMs = 0 } 
       const row = table.get(args.p_code);
       return reply(200, row ? [{ data: row.data, version: row.version }] : []);
     }
+    if (name === "wizard_delete") return reply(200, table.delete(args.p_code));
     if (name === "wizard_write") {
       const row = table.get(args.p_code);
       if (args.p_version === null) {
@@ -110,6 +111,12 @@ const URL_ = "https://example.supabase.co";
   eq("a poll with the current tag is answered 'unchanged' with no body", [again.status, again.body.unchanged, "game" in again.body], [200, true, false]);
   const missing = await handleGet(store, { code: "ZZZZ" });
   eq("a wrong code is 404, not a server error", [missing.status, missing.body.error], [404, "no_game"]);
+
+  eq("a player cannot close the table", (await handlePost(store, { action: "end", code, seatKey: joined.body.seatKey })).body.error, "host_only");
+  eq("the scorekeeper can", (await handlePost(store, { action: "end", code, hostKey })).status, 200);
+  eq("and the row is gone", rest.table.has(code), false);
+  eq("so the code reads as no game", (await handleGet(store, { code })).status, 404);
+  eq("removing what is already gone says so", await store.remove(code), { ok: false });
 }
 
 // ---- a full table bidding at once, all writes landing ----------------------

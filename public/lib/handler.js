@@ -149,6 +149,18 @@ export async function handlePost(store, body) {
     });
   }
 
+  // A game exists only while it is being played. The scorekeeper closing a
+  // finished table takes its row with it; nothing is kept.
+  if (action === "end") {
+    const current = await store.read(code);
+    if (!current) return fail(404, "no_game", "No game with that code.");
+    const auth = authorize(current.data, { hostKey: body.hostKey, seatKey: body.seatKey });
+    if (!auth.allowed) return fail(400, "not_allowed", "You're not in this game.");
+    if (!auth.isHost) return fail(400, "host_only", "Only the scorekeeper can close the table.");
+    await store.remove(code);
+    return ok({ ended: true });
+  }
+
   // Everything below acts on an existing game and needs a key.
   const guard = (fn, opts = {}) =>
     mutate(store, code, (g) => {
