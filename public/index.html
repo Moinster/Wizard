@@ -89,6 +89,18 @@ main{flex:1 1 auto;padding-bottom:28px;display:flex;flex-direction:column;gap:16
 .btn-row{display:flex;gap:8px;flex-wrap:wrap}
 .btn-row>*{flex:1 1 150px;width:auto}
 
+/* Two ways to run a table: a segmented choice at the top of the setup. */
+.seg{display:flex;gap:6px;padding:4px;border-radius:14px;background:var(--surface-2);margin-bottom:14px}
+.seg button{flex:1 1 0;min-height:44px;padding:6px 10px;border-radius:11px;border:1px solid transparent;
+  background:transparent;color:var(--ink-2);font-weight:700;font-size:.86rem;line-height:1.2}
+.seg button[aria-pressed="true"]{background:var(--surface);color:var(--ink);border-color:var(--line);box-shadow:var(--shadow-sm)}
+.add-row{display:flex;gap:8px;margin-top:12px}
+.add-row input{flex:1 1 auto;min-width:0;height:44px;padding:0 12px;border-radius:10px;border:1px solid var(--line);
+  background:var(--surface-2);font-weight:600}
+.add-row input:focus{background:var(--surface);border-color:var(--accent)}
+.add-row .btn{flex:none;min-height:44px;padding:0 16px;font-size:.9rem;box-shadow:none}
+.follow{display:flex;align-items:center;gap:8px;color:var(--ink-2);font-size:.85rem}
+
 .field{display:flex;flex-direction:column;gap:6px;margin-bottom:12px}
 .field label{font-size:.7rem;text-transform:uppercase;letter-spacing:.12em;font-weight:800;color:var(--ink-3)}
 .field input{height:var(--tap);padding:0 14px;border-radius:11px;border:1px solid var(--line);
@@ -267,9 +279,24 @@ table.log tbody tr:last-child{border-bottom:0}
   border-radius:999px;box-shadow:var(--shadow-md);max-width:calc(100% - 32px);text-align:center}
 .toast[hidden]{display:none}
 .conn{font-size:.68rem;font-weight:800;text-transform:uppercase;letter-spacing:.1em;color:var(--ink-3);
-  display:flex;align-items:center;gap:6px;justify-content:center;padding-top:2px}
-.conn .led{width:7px;height:7px;border-radius:999px;background:var(--good)}
-.conn.stale .led{background:var(--bad)}
+  display:flex;align-items:center;gap:6px;justify-content:center;padding:4px 8px;margin:0 auto;
+  background:none;border:0;border-radius:999px;cursor:pointer;font-family:inherit}
+.conn:hover{background:var(--surface-2);color:var(--ink-2)}
+.conn .led{width:7px;height:7px;border-radius:999px;background:var(--good);flex:none}
+.conn.stale .led{background:var(--bad);animation:pulse 1.2s ease-in-out infinite}
+.conn.stale{color:var(--bad)}
+
+/* Deliberate submits: a draft, a button that says what it sends, and a
+   confirmation that stays put until the table moves on. */
+.pill.sent{background:var(--good-soft);color:var(--good);border-color:transparent;padding:4px 10px;
+  border-radius:999px;font-size:.8rem;font-weight:800;display:inline-flex;align-items:center;gap:6px}
+.bid-big{font-size:clamp(2.6rem,14vw,4rem);font-weight:900;line-height:1;color:var(--accent);margin:2px 0 10px}
+.bid-row{display:flex;align-items:center;gap:10px;flex-wrap:wrap}
+.badge.live{background:var(--accent);color:var(--accent-ink);animation:pulse 1.6s ease-in-out infinite}
+.roster-row.due .roster-name{color:var(--accent)}
+.panel.editing{border-color:var(--accent);box-shadow:0 0 0 3px var(--accent-soft)}
+.opt-note.unsaved{color:var(--accent);font-weight:700}
+.panel.slim{padding:10px 16px;display:flex;justify-content:center}
 .flash{animation:flash .5s ease-out}
 @keyframes flash{0%{transform:scale(1)}35%{transform:scale(1.08)}100%{transform:scale(1)}}
 @media (prefers-reduced-motion: reduce){ *{animation-duration:.001ms !important;transition-duration:.001ms !important} }

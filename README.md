@@ -61,6 +61,20 @@ Pass a port as an argument if 3000 is busy: `node server.js 8080`.
 The scorekeeper can also enter a bid for someone whose phone died, undo the last
 round, and start a rematch with the same table.
 
+### One phone keeps score, the rest follow along
+
+The other way to run a table: on the start screen choose **I'll keep score for
+everyone**, name the players, and seat the table. Nobody joins. The scorekeeper
+takes every bid and every trick count from their own phone, one seat at a time
+under in-turn bidding, exactly as the one-device page does — and anyone with
+the code or the link can **follow along**: a read-only view of every bid and
+score as it lands, with nothing to tap.
+
+The two ways mix. In a phones game the scorekeeper can seat someone without a
+phone from the lobby (**Add someone without a phone**) and enters their bids
+each round; and anyone can open a phones game with **Just watch** instead of
+taking a seat.
+
 **Scoring** defaults to the standard rule: hit your bid exactly for
 `20 + 10 × bid`, or lose `10` per trick over or under. Round 1 deals one card
 each and every round adds one, until the 60-card deck runs out — 20 rounds for
@@ -117,18 +131,22 @@ against the browser's own storage. Identical rules, identical scoring, identical
 validation — the only difference is where the state lives and how many devices
 can see it.
 
-### Reading a blob without reading the past
+### Where a game lives on Vercel
 
-Blob content is served through a CDN. Fetching the blob's URL can therefore
-return a body from before the last write, while `head()` reports the new etag,
-because that comes from the control API instead. Pairing the two hands a caller
-a current version tag beside stale state — so it stores that tag, its next poll
-answers "unchanged", and it stops asking. That was worth anywhere up to a minute
-of apparent lag.
+One Postgres row per game, in Supabase: `wizard_games (code, data, version)`.
+Two SQL functions are the only way in — `wizard_read(code)` answers the row or
+nothing, and `wizard_write(code, data, version)` is a single
+`UPDATE … WHERE version = $3` that answers the new version or `null` when the
+write lost. The compare-and-swap is one atomic statement in the database, and a
+read is the row as it is now: there is no cache between the API and the truth.
 
-Reads pass `cache=0`, the documented way to read from origin, and key the URL on
-the version as well so no store can serve one version's body under another
-version's URL.
+That last point is why it is a database and not a Blob store. Blob bodies are
+served through a CDN, and on a store created with public access no option this
+project can set reads from origin — the SDK only honours `useCache: false` for
+private blobs. A phone could read a version tag that was current beside a body
+that was seconds old, including its own last write, and there was no fixing
+that from here. `blobStore()` is still in `lib/store.js` for a project that has
+a private store and nothing else; it is not what the deployed app uses.
 
 ### Why there's a version tag on every write
 
@@ -193,25 +211,33 @@ or four.
 
 Vercel runs the API as serverless functions. Each request is a fresh, stateless
 invocation, so a game **cannot** live in process memory the way it does under
-`server.js` — Vercel needs a Blob store to hold games instead. That is the only
+`server.js` — it needs a database to hold games instead. That is the only
 real difference; the rules, scoring and validation are the same files.
 
 ```
 api/game.js             serverless function: the HTTP skin over lib/handler.js
 api/health.js           the probe that tells the client a backend exists
 vercel.json             serves public/ statically, redirects the old /g/CODE form
-public/lib/store.js     gains blobStore(), behind the same three-call interface
+public/lib/store.js     gains supabaseStore() (and blobStore()), same interface
 ```
 
 1. **Import the repository** in Vercel — no framework preset, and nothing to
    configure. `vercel.json` already points the static site at `public/`.
-2. **Add a Blob store** — in the project, **Storage → Create → Blob**, and
-   connect it to this project. That injects `BLOB_READ_WRITE_TOKEN`
-   automatically; there is nothing else to set.
-3. **Redeploy** so the functions pick the token up.
+2. **Create the table and functions** in a Supabase project by running
+   `supabase/wizard_games.sql` in its SQL editor. It adds one table and two
+   functions, all prefixed `wizard_`, and touches nothing else — it is safe to
+   run in a database that other things already use.
+3. **Set two environment variables** on the Vercel project, for every
+   environment: `SUPABASE_URL` (the project's API URL) and `SUPABASE_KEY`
+   (its publishable key; the legacy anon key also works). The key can only
+   reach the two `wizard_` functions, and a game's four-letter code is the
+   only handle.
+4. **Redeploy** so the functions pick them up.
 
-Without a Blob store connected, `/api/game` returns a clear error saying so
-rather than failing in some confusing way.
+Without a database configured, `/api/game` returns a clear error saying so
+rather than failing in some confusing way. If `BLOB_READ_WRITE_TOKEN` is set
+and the Supabase variables are not, the Blob store is used instead — with the
+CDN lag described under *Where a game lives on Vercel*.
 
 ### Two things worth knowing
 
@@ -219,14 +245,13 @@ rather than failing in some confusing way.
   and one-device mode by probing `/api/health`. If that endpoint is missing or
   failing, a perfectly good deployment will quietly serve the solo version.
 - **Every phone polls about once a second while a game is running.** On Vercel
-  that is a function invocation and a Blob metadata read each time, so a long
+  that is a function invocation and one database call each time, so a long
   game with five players is tens of thousands of invocations. Fine for a hobby
   project; worth knowing before it surprises you on a bill.
 
-Games are stored one JSON blob per game at `games/<CODE>.json`. Blobs are
-public-read but only reachable through the API, and the four-letter code is the
-only handle — fine for a card game score sheet, not a secret store. Finished
-games can be cleared from the Blob dashboard whenever.
+Finished games stay in `wizard_games` until deleted; `updated_at` says when a
+table was last touched, so clearing anything older than a week is one
+`DELETE`. It is a card game score sheet, not a secret store.
 
 If you would rather not run a database at all, `server.js` on any host that runs
 a Node process needs none of this — see the sections above.

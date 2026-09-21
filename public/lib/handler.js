@@ -3,9 +3,9 @@
 
 import {
   ROUNDS_FOR, newGame, publicView, randomCode,
-  applyJoin, applyRename, applyStart, applyBid, applyClearBid, applyTrump,
-  applyReorder, applyDealerStart, applySettings,
-  applyToTricks, applyBackToBids, applySetTrick, applyScore, applyUndo, applyRematch,
+  applyJoin, applyAddPlayer, applyRemovePlayer, applyRename, applyStart, applyBid, applyClearBid, applyTrump,
+  applyReorder, applyDealerStart, applySettings, applySeating,
+  applyToTricks, applyBackToBids, applySetTrick, applyScore, applyScoreRound, applyUndo, applyRematch,
 } from "./game.js";
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
@@ -18,11 +18,46 @@ const fail = (status, error, message) => ({ status, body: { error, message } });
  * Read, mutate, write-if-unchanged, retry. `fn` may return {error, message} to
  * reject the whole attempt, or any other object to have its fields merged into
  * the response.
+ *
+ * The store's body read can lag its own last write by seconds, while head() is
+ * current at once. A phone that trusted the lagging read used to spend its
+ * whole budget writing against a version that was already gone -- a real game
+ * saw one write lose its race and then fail for another four seconds with
+ * nobody else writing. So before a write, and after a lost one, the body's
+ * version is checked against the store's, and a stale view is re-read rather
+ * than written from. Writes that lose are then genuine races, and a loser
+ * picks a slot in a window that widens to about one write's length.
+ *
+ * The budget stays clear of the platform's 10s function timeout. The player
+ * sees only a latched "Sending" for a moment longer; only when the budget is
+ * truly spent are they asked to tap again -- and the reason is logged.
  */
-async function mutate(store, code, fn, tries = 5) {
-  for (let attempt = 0; attempt < tries; attempt++) {
+const RETRY_BUDGET_MS = 7000;
+
+async function mutate(store, code, fn, opts = {}) {
+  const budget = opts.budgetMs ?? RETRY_BUDGET_MS;
+  const sleepFn = opts.sleep || sleep;
+  const now = opts.now || Date.now;
+  const log = opts.log || ((...a) => console.warn(...a));
+  const deadline = now() + budget;
+  let staleReads = 0, lostRaces = 0;
+
+  for (let attempt = 1; ; attempt++) {
     const current = await store.read(code);
     if (!current) return fail(404, "no_game", "No game with that code.");
+
+    // A view the store itself says is behind is not worth writing from.
+    if (store.fresh) {
+      const live = await store.fresh(code);
+      if (live && current.etag && live !== current.etag) {
+        staleReads++;
+        const wait = Math.min(600, 150 * staleReads);
+        if (now() + wait >= deadline) break;
+        await sleepFn(wait);
+        continue;
+      }
+    }
+
     const next = clone(current.data);
     const out = fn(next) || {};
     if (out.error) return fail(400, out.error, out.message);
@@ -30,9 +65,14 @@ async function mutate(store, code, fn, tries = 5) {
     next.updatedAt = Date.now();
     const written = await store.write(code, next, current.etag);
     if (written.ok) return { status: 200, body: { ...out, game: next } };
-    await sleep(30 + Math.random() * 90);
+
+    lostRaces++;
+    const wait = Math.min(600, 200 * lostRaces) * (0.5 + Math.random());
+    if (now() + wait >= deadline) break;
+    await sleepFn(wait);
   }
-  return fail(409, "busy", "Too many phones wrote at once. Try that again.");
+  log(`wizard mutate: gave up on ${code} after ${lostRaces} lost race(s) and ${staleReads} stale read(s)`);
+  return fail(409, "busy", "The table is busy. Tap it again.");
 }
 
 /** The host may act for any seat; a player may only act for their own. */
@@ -62,21 +102,29 @@ export async function handlePost(store, body) {
   const code = body.code ? String(body.code).toUpperCase() : null;
 
   if (action === "create") {
-    const seatCount = Math.max(2, Math.min(8, Number(body.seatCount) || 4));
+    // The scorekeeper either takes a seat and opens the rest to phones, or
+    // names the whole table and runs it from their own device.
+    const hostRuns = Boolean(body.hostRuns);
+    const names = hostRuns ? (Array.isArray(body.names) ? body.names : []).slice(0, 8).map((n) => String(n ?? "")) : [];
+    if (hostRuns && names.length < 2) return fail(400, "too_few", "Name at least two players.");
+    const seatCount = hostRuns ? names.length : Math.max(2, Math.min(8, Number(body.seatCount) || 4));
     const roundsAuto = body.rounds === undefined || body.rounds === null || body.rounds === "";
     const rounds = Math.max(1, Math.min(20, Number(body.rounds) || ROUNDS_FOR[seatCount] || 15));
     const hostName = (body.name || "").trim().slice(0, 14) || "Player 1";
     for (let attempt = 0; attempt < 8; attempt++) {
       const candidate = randomCode();
-      const game = newGame({ code: candidate, hostName, seatCount, rounds, roundsAuto, clientId: body.clientId || null });
+      const game = newGame({
+        code: candidate, hostName, seatCount, rounds, roundsAuto, clientId: body.clientId || null, hostRuns, names,
+      });
       const written = await store.write(candidate, game, null);
       if (written.ok) {
+        const seatKey = hostRuns ? null : game.seats[0].key;
         return ok({
           code: candidate,
           hostKey: game.hostKey,
-          seatKey: game.seats[0].key,
-          seatIdx: 0,
-          game: publicView(game, { hostKey: game.hostKey, seatKey: game.seats[0].key }),
+          seatKey,
+          seatIdx: hostRuns ? null : 0,
+          game: publicView(game, { hostKey: game.hostKey, seatKey }),
         });
       }
     }
@@ -115,6 +163,10 @@ export async function handlePost(store, body) {
   switch (action) {
     case "rename":
       return guard((g) => applyRename(g, { idx: Number(body.idx), name: body.name }), { idx: Number(body.idx) });
+    case "addPlayer":
+      return guard((g) => applyAddPlayer(g, { name: body.name }), { hostOnly: true });
+    case "removePlayer":
+      return guard((g) => applyRemovePlayer(g, { idx: Number(body.idx) }), { hostOnly: true });
     case "start":
       return guard((g) => applyStart(g), { hostOnly: true });
     case "reorder":
@@ -124,7 +176,13 @@ export async function handlePost(store, body) {
     case "settings":
       return guard((g) => applySettings(g, { scoring: body.scoring, bidding: body.bidding }), { hostOnly: true });
     case "bid":
-      return guard((g) => applyBid(g, { idx: Number(body.idx), value: Number(body.value) }), { idx: Number(body.idx) });
+      return guard((g) => applyBid(g, { idx: Number(body.idx), value: Number(body.value), round: body.round }), { idx: Number(body.idx) });
+    case "seating":
+      return guard((g) => applySeating(g, {
+        order: body.order, dealerStart: body.dealerStart, scoring: body.scoring, bidding: body.bidding,
+      }), { hostOnly: true });
+    case "scoreRound":
+      return guard((g) => applyScoreRound(g, { tricks: body.tricks, round: body.round }), { hostOnly: true });
     case "clearBid":
       return guard((g) => applyClearBid(g, { idx: Number(body.idx) }), { idx: Number(body.idx) });
     case "trump":

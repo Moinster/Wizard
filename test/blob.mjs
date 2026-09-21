@@ -40,12 +40,14 @@ class BlobAlreadyExistsError extends Error {
  * lags `origin` by one write, which is what the real CDN does and what makes
  * dropping useCache:false a test failure rather than a production incident.
  */
-function fakeBlob({ failReads = 0, throwOnMissing = false, etagOn304 = true } = {}) {
+function fakeBlob({ failReads = 0, throwOnMissing = false, etagOn304 = true, rateLimitReads = 0, readLag = 0 } = {}) {
   const origin = new Map();   // pathname -> { body, etag }
   const cdn = new Map();
   let seq = 0;
   let readsLeftToFail = failReads;
-  const calls = { get: [], put: [] };
+  let rateLimitedLeft = rateLimitReads;
+  const calls = { get: [], put: [], head: [] };
+  const lagging = new Map();   // pathname -> { prev, left }: reads still served the old version
 
   return {
     calls,
@@ -62,6 +64,12 @@ function fakeBlob({ failReads = 0, throwOnMissing = false, etagOn304 = true } = 
           err.cause = new Error("read ECONNRESET");
           throw err;
         }
+        if (rateLimitedLeft > 0) {
+          // What the real store does to an origin-read burst: sheds it with a
+          // 403. The token is fine; it read the same key a moment ago.
+          rateLimitedLeft--;
+          throw new Error("Vercel Blob: Failed to fetch blob: 403 Forbidden");
+        }
         const live = origin.get(pathname);
         // The real get() signals an absent blob by RETURNING null. The fake
         // said it threw, which is why the store's null branch was missing and
@@ -70,7 +78,11 @@ function fakeBlob({ failReads = 0, throwOnMissing = false, etagOn304 = true } = 
         if (!live) { if (throwOnMissing) throw new BlobNotFoundError(); return null; }
         // Forgetting useCache:false gets you the copy from before the last
         // write, with the current tag beside it -- the production bug, exactly.
-        const served = opts.useCache === false ? live : (cdn.get(pathname) || live);
+        let served = opts.useCache === false ? live : (cdn.get(pathname) || live);
+        // Even an origin read lags a write for a while: the previous version,
+        // previous tag and all, for the next few reads.
+        const lag = lagging.get(pathname);
+        if (lag && lag.left > 0) { lag.left--; served = lag.prev; }
         if (opts.ifNoneMatch && opts.ifNoneMatch === served.etag) {
           // A real 304 reads its etag off the response header, and that header
           // is not always there -- production returned "".
@@ -83,12 +95,21 @@ function fakeBlob({ failReads = 0, throwOnMissing = false, etagOn304 = true } = 
         };
       },
 
+      // The API's view: current the moment a write lands.
+      async head(pathname) {
+        calls.head.push(pathname);
+        const live = origin.get(pathname);
+        if (!live) throw new BlobNotFoundError();
+        return { pathname, etag: live.etag };
+      },
+
       async put(pathname, body, opts = {}) {
         calls.put.push({ pathname, opts });
         const live = origin.get(pathname);
         if (live && !opts.allowOverwrite) throw new BlobAlreadyExistsError();
         if (opts.ifMatch && (!live || live.etag !== opts.ifMatch)) throw new BlobPreconditionFailedError();
         if (live) cdn.set(pathname, live);          // the CDN keeps the old one
+        if (live && readLag) lagging.set(pathname, { prev: live, left: readLag });
         origin.set(pathname, { body, etag: `b${++seq}` });
         return { pathname };
       },
@@ -208,6 +229,56 @@ function fakeBlob({ failReads = 0, throwOnMissing = false, etagOn304 = true } = 
   eq("the API passes that tag on", through.body.etag, first.etag);
 }
 
+// ---- a read that lags the last write is waited out, not written from ------
+{
+  // In a real game one write lost its race and then failed for four more
+  // seconds with nobody else writing: every re-read still returned the version
+  // from before the other phone's write, so ifMatch could never succeed. The
+  // store's head() is current at once, so a write waits for the body to agree
+  // with it instead of burning the budget against a version already gone.
+  const fake = fakeBlob({ readLag: 3 });
+  const store = blobStore(async () => fake.module);
+  await store.write("LLLL", { v: 1 }, null);
+  const first = await store.read("LLLL");
+  await store.write("LLLL", { v: 2 }, first.etag);        // "the other phone"
+
+  const lagged = await store.read("LLLL");
+  eq("the fake really does serve the old version after a write", lagged.data, { v: 1 });
+  eq("while head() already knows the new one", (await store.fresh("LLLL")) !== lagged.etag, true);
+
+  const made = await handlePost(store, { action: "create", name: "Mira", seatCount: 2 });
+  const { code, hostKey } = made.body;
+  await handlePost(store, { action: "join", code, name: "Jonas" });
+  await handlePost(store, { action: "settings", code, hostKey, bidding: "open" });
+  await handlePost(store, { action: "start", code, hostKey });
+  const putsBefore = fake.calls.put.length;
+  const t0 = Date.now();
+  const bid = await handlePost(store, { action: "bid", code, hostKey, idx: 0, value: 1 });
+  eq("a write behind a lagging read still lands", bid.status, 200);
+  eq("with exactly one put -- nothing was thrown at a stale version", fake.calls.put.length - putsBefore, 1);
+  ok("and inside a couple of seconds, not a budget", Date.now() - t0 < 2500, `${Date.now() - t0}ms`);
+}
+
+// ---- the store shedding load is not the game breaking ---------------------
+{
+  // Origin reads bypass the CDN and the store rate limits them; a burst of
+  // joins walked into it and every one came back "something broke". A shed
+  // read is waited out, and is never mistaken for the game being gone.
+  const fake = fakeBlob({ rateLimitReads: 2 });
+  const store = blobStore(async () => fake.module);
+  await store.write("HHHH", { v: 1 }, null);
+  eq("a rate-limited read is waited out, not surfaced", (await store.read("HHHH")).data, { v: 1 });
+
+  const shedding = blobStore(async () => fakeBlob({ rateLimitReads: 99 }).module);
+  let threw = null;
+  try { await shedding.read("HHHH"); } catch (err) { threw = err; }
+  ok("a store that only ever sheds still raises, rather than claiming no game",
+    threw !== null && /403/.test(threw.message), String(threw && threw.message));
+  let apiThrew = false;
+  try { await handleGet(blobStore(async () => fakeBlob({ rateLimitReads: 99 }).module), { code: "HHHH" }); } catch { apiThrew = true; }
+  ok("and the API raises rather than answering 404", apiThrew, "it answered instead of raising");
+}
+
 // ---- end to end through the API, on the blob store -------------------------
 {
   const fake = fakeBlob();
@@ -219,6 +290,9 @@ function fakeBlob({ failReads = 0, throwOnMissing = false, etagOn304 = true } = 
 
   await handlePost(store, { action: "join", code, name: "Jonas" });
   await handlePost(store, { action: "join", code, name: "Ada" });
+  // The race below is about bids landing together, which only all-at-once
+  // bidding allows; in turn, the second would be refused as out of turn.
+  await handlePost(store, { action: "settings", code, hostKey, bidding: "open" });
   eq("start over blob returns 200", (await handlePost(store, { action: "start", code, hostKey })).status, 200);
 
   const read = await handleGet(store, { code, hostKey });

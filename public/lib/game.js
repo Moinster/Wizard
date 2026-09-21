@@ -31,23 +31,36 @@ export const SCORING_VARIANTS = [
 
 export const BIDDING_VARIANTS = [
   {
-    key: "open",
-    name: "Open bidding",
-    blurb: "Bids are called in turn, starting to the dealer's left, and everyone sees each one as it lands. The dealer bids last and knows the whole table.",
+    key: "turn",
+    name: "In turn",
+    inTurn: true,
+    blurb: "Bids go round the table one at a time, starting to the dealer\u2019s left, and everyone sees each one as it lands. The dealer bids last and knows the whole table. Only the player whose turn it is can bid.",
   },
   {
     key: "screwDealer",
-    name: "Screw the dealer",
-    blurb: "Open bidding, except the dealer may not make the bids add up to the number of tricks. Somebody is always going to miss, and the dealer is stuck choosing who.",
+    name: "In turn, screw the dealer",
+    inTurn: true,
+    blurb: "As in turn, except the dealer may not make the bids add up to the number of tricks. Somebody is always going to miss, and the dealer is stuck choosing who.",
+  },
+  {
+    key: "open",
+    name: "All at once",
+    inTurn: false,
+    blurb: "Everyone bids whenever they like and every bid shows as it lands. Quicker, and nobody has to wait their turn.",
   },
   {
     key: "blind",
-    name: "Blind bidding",
+    name: "All at once, blind",
+    inTurn: false,
     blurb: "Everybody bids at once and nobody sees another bid until the last one is in. No reading the table \u2014 and the totals can land anywhere.",
   },
 ];
 
-export const DEFAULT_SETTINGS = { scoring: "standard", bidding: "open" };
+/** Whether a bidding rule makes players wait their turn. */
+export const biddingInTurn = (bidding) =>
+  Boolean((BIDDING_VARIANTS.find((v) => v.key === bidding) || {}).inTurn);
+
+export const DEFAULT_SETTINGS = { scoring: "standard", bidding: "turn" };
 
 const scoringKeys = SCORING_VARIANTS.map((v) => v.key);
 const biddingKeys = BIDDING_VARIANTS.map((v) => v.key);
@@ -90,6 +103,17 @@ export function bidOrder(round, seatCount, dealerStart = 0) {
   return Array.from({ length: seatCount }, (_, i) => (start + i) % seatCount);
 }
 
+/**
+ * Under in-turn bidding, the seat whose bid is due: the first in bid order
+ * without one. Null once every bid is in, or when bids need no turn.
+ */
+export function nextToBid(g) {
+  if (!biddingInTurn(g.settings.bidding)) return null;
+  const order = bidOrder(g.round, g.seats.length, g.dealerStart);
+  const due = order.find((idx) => typeof g.bids[idx] !== "number");
+  return due === undefined ? null : due;
+}
+
 export function standings(game) {
   const totals = totalsFrom(game.history, game.seats.length, game.settings);
   const rows = game.seats.map((s, i) => ({ idx: i, name: s.name, total: totals[i] }));
@@ -116,20 +140,34 @@ export function randomKey() {
   return out;
 }
 
-export function newGame({ code, hostName, seatCount, rounds, roundsAuto = true, clientId = null }) {
-  const seats = Array.from({ length: seatCount }, (_, i) => ({
-    idx: i,
-    name: i === 0 ? hostName : "",
-    key: i === 0 ? randomKey() : null,
-    joined: i === 0,
-    clientId: i === 0 ? clientId : null,
-  }));
+/**
+ * A seat is either a phone's (it has a key) or the scorekeeper's to fill in
+ * (it has none). A game the host runs seats everyone the second way from the
+ * start: the host names the table, nobody joins, and other phones can only
+ * follow along.
+ */
+const cleanName = (name, idx) => (name || "").trim().slice(0, 14) || `Player ${idx + 1}`;
+export const managedSeat = (idx, name) => ({
+  idx, name: cleanName(name, idx), key: null, joined: true, clientId: null,
+});
+
+export function newGame({ code, hostName, seatCount, rounds, roundsAuto = true, clientId = null, hostRuns = false, names = [] }) {
+  const seats = hostRuns
+    ? names.map((n, i) => managedSeat(i, n))
+    : Array.from({ length: seatCount }, (_, i) => ({
+        idx: i,
+        name: i === 0 ? hostName : "",
+        key: i === 0 ? randomKey() : null,
+        joined: i === 0,
+        clientId: i === 0 ? clientId : null,
+      }));
   return {
     code,
     v: 1,
     createdAt: Date.now(),
     updatedAt: Date.now(),
     status: "lobby",
+    hostRuns: Boolean(hostRuns),
     rounds,
     roundsAuto,
     settings: { ...DEFAULT_SETTINGS },
@@ -157,12 +195,15 @@ export function publicView(game, { hostKey, seatKey } = {}) {
     code: game.code,
     v: game.v,
     status: game.status,
+    hostRuns: Boolean(game.hostRuns),
     rounds: game.rounds,
     round: game.round,
     cards: cardsFor(game.round),
     phase: game.phase,
     trump: game.trump,
-    seats: game.seats.map((s) => ({ idx: s.idx, name: s.name, joined: s.joined })),
+    // `managed`: a seat with no phone behind it, so the scorekeeper enters
+    // its bids. Never the key itself.
+    seats: game.seats.map((s) => ({ idx: s.idx, name: s.name, joined: s.joined, managed: Boolean(s.joined && !s.key) })),
     bids: visibleBids(game, youIdx),
     // Who has bid, which stays true even when the values are hidden.
     bidPlaced: Object.keys(game.bids).map(Number),
@@ -173,6 +214,8 @@ export function publicView(game, { hostKey, seatKey } = {}) {
     order: bidOrder(game.round, game.seats.length, game.dealerStart),
     settings: game.settings,
     dealerStart: game.dealerStart,
+    inTurn: biddingInTurn(game.settings.bidding),
+    nextToBid: game.status === "playing" && game.phase === "bid" ? nextToBid(game) : null,
     isHost,
     youIdx,
   };
@@ -200,6 +243,7 @@ function visibleBids(game, youIdx) {
 // ---------------------------------------------------------------------------
 
 export function applyJoin(g, { name, clientId }) {
+  if (g.hostRuns) return { error: "host_runs", message: "The scorekeeper runs this table. You can follow along." };
   if (g.status !== "lobby") return { error: "already_started", message: "That game has already started." };
 
   // Joining has to be idempotent per device. A slow first tap invites a second
@@ -222,6 +266,43 @@ export function applyJoin(g, { name, clientId }) {
   seat.key = randomKey();
   seat.clientId = clientId || null;
   return { seatIdx: seat.idx, seatKey: seat.key };
+}
+
+/**
+ * The scorekeeper seats someone who has no phone: an open seat if there is
+ * one, a new one otherwise, up to the table's limit. Their bids are the
+ * scorekeeper's to enter.
+ */
+export function applyAddPlayer(g, { name }) {
+  if (g.status !== "lobby") return { error: "already_started", message: "That game has already started." };
+  const open = g.seats.find((s) => !s.joined);
+  if (open) {
+    Object.assign(open, managedSeat(open.idx, name));
+    return { seatIdx: open.idx };
+  }
+  if (g.seats.length >= 8) return { error: "full", message: "Eight is the most the game can seat." };
+  const seat = managedSeat(g.seats.length, name);
+  g.seats.push(seat);
+  return { seatIdx: seat.idx };
+}
+
+/** Take a no-phone player back out of the lobby. A phone's seat is its own. */
+export function applyRemovePlayer(g, { idx }) {
+  if (g.status !== "lobby") return { error: "already_started", message: "That game has already started." };
+  const seat = g.seats[idx];
+  if (!seat || !seat.joined) return { error: "no_seat", message: "Nobody is sitting there." };
+  if (seat.key) return { error: "has_phone", message: `${seat.name} joined from their own phone.` };
+  if (g.hostRuns) {
+    // These seats exist only for the people in them, so the seat goes too,
+    // and the first dealer is found again by who they are.
+    const dealer = g.seats[g.dealerStart];
+    g.seats = g.seats.filter((s) => s.idx !== idx).map((s, i) => ({ ...s, idx: i }));
+    const at = dealer && dealer.idx !== idx ? g.seats.findIndex((s) => s.name === dealer.name) : -1;
+    g.dealerStart = at === -1 ? 0 : at;
+  } else {
+    Object.assign(seat, { name: "", key: null, joined: false, clientId: null });
+    if (g.dealerStart === idx) g.dealerStart = (g.seats.find((s) => s.joined) || { idx: 0 }).idx;
+  }
 }
 
 export function applyRename(g, { idx, name }) {
@@ -292,12 +373,42 @@ export function applyStart(g) {
   g.tricks = {};
 }
 
-export function applyBid(g, { idx, value }) {
+/**
+ * A phone declares a bid once, deliberately, so a submit carries the round it
+ * was meant for. A retry that lands after the round has moved on is refused
+ * rather than becoming a bid for the wrong hand.
+ */
+function wrongRound(g, round) {
+  if (round === undefined || round === null) return null;
+  if (Number(round) === g.round) return null;
+  return { error: "stale_round", message: `That was for round ${round}; the table is on round ${g.round}.` };
+}
+
+export function applyBid(g, { idx, value, round }) {
   if (g.status !== "playing") return { error: "not_playing", message: "The game isn't running." };
   if (g.phase !== "bid") return { error: "wrong_phase", message: "Bidding for this round is closed." };
+  const stale = wrongRound(g, round);
+  if (stale) return stale;
   const cards = cardsFor(g.round);
   if (!Number.isInteger(value) || value < 0 || value > cards) {
     return { error: "bad_bid", message: `A bid has to be between 0 and ${cards}.` };
+  }
+
+  // In turn: only the seat whose bid is due may bid. Changing a bid already
+  // made is allowed only for whoever bid last, so the order never has a hole
+  // in it. Enforced here, not in the page, because a phone's view can lag.
+  if (biddingInTurn(g.settings.bidding)) {
+    const due = nextToBid(g);
+    const order = bidOrder(g.round, g.seats.length, g.dealerStart);
+    const placed = order.filter((i) => typeof g.bids[i] === "number");
+    const last = placed.length ? placed[placed.length - 1] : null;
+    if (idx !== due && idx !== last) {
+      const who = due === null ? null : g.seats[due];
+      return {
+        error: "not_your_turn",
+        message: who ? `It's ${who.name}'s turn to bid.` : "Every bid is already in.",
+      };
+    }
   }
 
   // Screw the dealer: once everyone else has bid, the dealer may not make the
@@ -322,6 +433,13 @@ export function applyBid(g, { idx, value }) {
 
 export function applyClearBid(g, { idx }) {
   if (g.phase !== "bid") return { error: "wrong_phase", message: "Bidding for this round is closed." };
+  if (biddingInTurn(g.settings.bidding)) {
+    const order = bidOrder(g.round, g.seats.length, g.dealerStart);
+    const placed = order.filter((i) => typeof g.bids[i] === "number");
+    if (placed.length && placed[placed.length - 1] !== idx) {
+      return { error: "not_your_turn", message: "Only the last bid can be taken back." };
+    }
+  }
   delete g.bids[idx];
 }
 
@@ -377,6 +495,56 @@ export function applyScore(g) {
   } else {
     g.round += 1;
     g.phase = "bid";
+  }
+}
+
+/**
+ * The scorekeeper enters every seat's tricks, checks the total, and submits
+ * once. One write scores the round, and the checks that used to fire only on
+ * the final tap now fire on the whole form -- a wrong total is refused before
+ * it can become a wrong score.
+ */
+export function applyScoreRound(g, { tricks, round }) {
+  if (g.status !== "playing") return { error: "not_playing", message: "The game isn't running." };
+  if (g.phase !== "tricks") return { error: "wrong_phase", message: "Bids aren't all in yet." };
+  const stale = wrongRound(g, round);
+  if (stale) return stale;
+  const cards = cardsFor(g.round);
+  const entered = {};
+  for (const s of g.seats) {
+    const v = tricks && tricks[s.idx];
+    if (!Number.isInteger(v) || v < 0 || v > cards) {
+      return { error: "tricks_missing", message: `Enter tricks taken for ${s.name} (0 to ${cards}).` };
+    }
+    entered[s.idx] = v;
+  }
+  const sum = Object.values(entered).reduce((a, b) => a + b, 0);
+  if (sum !== cards) {
+    return { error: "tricks_sum", message: `Tricks taken add up to ${sum}, but ${cards} were dealt.` };
+  }
+  g.tricks = entered;
+  return applyScore(g);
+}
+
+/**
+ * The host arranges the table and saves it in one go: order, first dealer and
+ * house rules together, rather than a write for every nudge of a row.
+ */
+export function applySeating(g, { order, dealerStart, scoring, bidding }) {
+  if (g.status !== "lobby") return { error: "already_started", message: "That game has already started." };
+  if (order !== undefined) {
+    const out = applyReorder(g, { order });
+    if (out && out.error) return out;
+  }
+  if (dealerStart !== undefined && dealerStart !== null) {
+    // After a reorder the dealer is named by their NEW position, which is what
+    // the page shows and the host tapped.
+    const out = applyDealerStart(g, { idx: Number(dealerStart) });
+    if (out && out.error) return out;
+  }
+  if (scoring !== undefined || bidding !== undefined) {
+    const out = applySettings(g, { scoring, bidding });
+    if (out && out.error) return out;
   }
 }
 

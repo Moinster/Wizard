@@ -27,6 +27,10 @@ export function memoryStore() {
       if (ifNoneMatch && row.etag === ifNoneMatch) return { unchanged: true, etag: row.etag };
       return { data: JSON.parse(row.body), etag: row.etag };
     },
+    async fresh(code) {
+      const row = rows.get(code);
+      return row ? row.etag : null;
+    },
     async write(code, data, etag) {
       const row = rows.get(code);
       if (etag === null) {
@@ -60,6 +64,10 @@ export function localStorageStore(prefix = "wizard.game.") {
       if (!r) return null;
       if (ifNoneMatch && r.etag === ifNoneMatch) return { unchanged: true, etag: r.etag };
       return { data: r.data, etag: r.etag };
+    },
+    async fresh(code) {
+      const r = row(code);
+      return r ? r.etag : null;
     },
     async write(code, data, etag) {
       const r = row(code);
@@ -120,12 +128,20 @@ export function blobStore(loadBlob = () => import("@vercel/blob")) {
         ...(ifNoneMatch ? { ifNoneMatch } : {}),
       });
 
-      // Reads have been seen to die mid-connection with ECONNRESET. One retry,
-      // and then the error goes up: the API has to answer a read it could not
+      // Reads fail transiently in two ways, and both used to reach the player.
+      // They die mid-connection with ECONNRESET; and, because an origin read
+      // bypasses the CDN, the store RATE LIMITS them and answers 403 once a
+      // burst gets hot enough — which is exactly what a table bidding at once
+      // produces. Neither means anything is wrong with the game, so both are
+      // backed off and retried here instead of becoming "something broke".
+      //
+      // Only after that does the error go up: the API has to answer a read it could not
       // make with a 500, never with the 404 that tells a player their game is
       // gone and clears it off their phone.
       let last = null;
-      for (let attempt = 0; attempt < 2; attempt++) {
+      for (let attempt = 0; attempt < 4; attempt++) {
+        // 150, 400, 900ms-ish: long enough to outlast a shedding window.
+        if (attempt > 0) await pause(150 * 2.4 ** (attempt - 1) * (0.7 + 0.6 * Math.random()));
         try {
           const res = await ask();
           // get() reports an absent blob by RETURNING null, not by throwing --
@@ -145,9 +161,27 @@ export function blobStore(loadBlob = () => import("@vercel/blob")) {
         } catch (err) {
           if (isMissing(err, BlobNotFoundError)) return null;
           last = err;
+          if (!isTransient(err)) break;
         }
       }
       throw last;
+    },
+
+    /**
+     * The version the store will actually check a write against. head() goes
+     * to the API and is current at once; a body read from origin can lag a
+     * write by seconds, and a phone that trusts the lagging read burns its
+     * whole budget writing against a version that is already gone.
+     */
+    async fresh(code) {
+      const { head } = await loadBlob();
+      try {
+        const meta = await head(keyFor(code));
+        return meta.etag || null;
+      } catch (err) {
+        if (isMissing(err, null)) return null;
+        throw err;
+      }
     },
 
     async write(code, data, etag) {
@@ -171,6 +205,22 @@ export function blobStore(loadBlob = () => import("@vercel/blob")) {
   };
 }
 
+const pause = (ms) => new Promise((r) => setTimeout(r, ms));
+
+/**
+ * Worth trying again. A 403 here is the store shedding load from origin reads,
+ * not a permissions problem — the same token read the same key a moment ago.
+ * 429 and 5xx are the same story, and a connection that dies mid-read is too.
+ */
+function isTransient(err) {
+  if (!err) return false;
+  const status = err.status || err.statusCode;
+  if (status === 403 || status === 429 || (status >= 500 && status < 600)) return true;
+  const text = String(err.message || "") + " " + String((err.cause && err.cause.message) || "");
+  return /(\b403\b|\b429\b|forbidden|too many requests|rate limit)/i.test(text)
+    || /econnreset|etimedout|socket hang up|fetch failed/i.test(text);
+}
+
 /** No blob under that key — the one error that means "no game", not "broken". */
 function isMissing(err, BlobNotFoundError) {
   if (!err) return false;
@@ -187,9 +237,80 @@ function isConflict(err) {
   return text.includes("precondition") || text.includes("already exists") || text.includes("conflict");
 }
 
+/**
+ * Supabase store: one Postgres row per game, behind two SQL functions that are
+ * the only way in (the table itself is closed to every API role). A read is
+ * the row as it is now -- there is no cache in front of a database -- and a
+ * write is a single UPDATE ... WHERE version = the one we read, so the
+ * compare-and-swap is one atomic statement and never a guess about whether
+ * the copy in hand is current. That is the whole reason this store exists:
+ * Blob's body reads came off a CDN, seconds behind a write, and no option
+ * this project could set changed that on a public store.
+ *
+ * Talks to PostgREST with fetch and no SDK: two POSTs, a JSON body each.
+ * `fetchFn` is a parameter so the tests can stand in for the network.
+ */
+export function supabaseStore({ url, key, fetchFn = (...a) => globalThis.fetch(...a) } = {}) {
+  if (!url || !key) throw new Error("supabaseStore needs a url and a key");
+  const base = url.replace(/\/+$/, "") + "/rest/v1/rpc/";
+  const headers = {
+    apikey: key,
+    "Content-Type": "application/json",
+    // A legacy anon key is a JWT and doubles as the bearer; a publishable
+    // key is not a token, and PostgREST assumes the anon role without one.
+    ...(key.startsWith("ey") ? { Authorization: `Bearer ${key}` } : {}),
+  };
+
+  async function rpc(name, args) {
+    let last = null;
+    for (let attempt = 0; attempt < 3; attempt++) {
+      if (attempt > 0) await pause(120 * 2 ** (attempt - 1) * (0.7 + 0.6 * Math.random()));
+      let res;
+      try {
+        res = await fetchFn(base + name, { method: "POST", headers, body: JSON.stringify(args) });
+      } catch (err) {
+        last = err;            // the connection died; try again
+        continue;
+      }
+      if (res.ok) return res.json();
+      const text = await res.text().catch(() => "");
+      last = Object.assign(new Error(`supabase ${name}: ${res.status} ${text.slice(0, 200)}`), { status: res.status });
+      if (!(res.status === 429 || res.status >= 500)) break;   // our fault, not the weather
+    }
+    throw last;
+  }
+
+  return {
+    name: "supabase",
+
+    async read(code, ifNoneMatch = null) {
+      const rows = await rpc("wizard_read", { p_code: code });
+      const row = Array.isArray(rows) ? rows[0] : null;
+      if (!row) return null;
+      const etag = String(row.version);
+      if (ifNoneMatch && ifNoneMatch === etag) return { unchanged: true, etag };
+      return { data: row.data, etag };
+    },
+
+    // No fresh(): the read IS the store's current view, so mutate() has
+    // nothing to reconcile it against and skips that round trip.
+
+    async write(code, data, etag) {
+      const version = await rpc("wizard_write", {
+        p_code: code,
+        p_data: data,
+        p_version: etag === null ? null : Number(etag),
+      });
+      // The function answers the new version, or null when the write lost:
+      // another phone wrote first, or a create found the code taken.
+      return { ok: typeof version === "number" };
+    },
+  };
+}
+
 /** The store a serverless deployment should use, or null if none is configured. */
-export function defaultStore() {
-  return typeof process !== "undefined" && process.env && process.env.BLOB_READ_WRITE_TOKEN
-    ? blobStore()
-    : null;
+export function defaultStore(env = (typeof process !== "undefined" && process.env) || {}) {
+  if (env.SUPABASE_URL && env.SUPABASE_KEY) return supabaseStore({ url: env.SUPABASE_URL, key: env.SUPABASE_KEY });
+  if (env.BLOB_READ_WRITE_TOKEN) return blobStore();
+  return null;
 }

@@ -54,10 +54,10 @@ const view = async (p = host) =>
   (await get({ code, hostKey: p.hostKey, seatKey: p.seatKey })).body.game;
 
 eq("round 1 deals 1 card", (await view()).cards, 1);
-eq("bid above the cards dealt is refused", (await bid(host, 2)).body.error, "bad_bid");
+eq("bid above the cards dealt is refused", (await bid(players[1], 2)).body.error, "bad_bid");
 eq("cannot leave bidding early", (await post({ action: "toTricks", code, hostKey })).body.error, "bids_missing");
 
-await bid(host, 1); await bid(players[1], 0); await bid(players[2], 0); await bid(players[3], 0);
+await bid(players[1], 0); await bid(players[2], 0); await bid(players[3], 0); await bid(host, 1);
 eq("every bid is visible to every phone", (await view(players[2])).bids, { 0: 1, 1: 0, 2: 0, 3: 0 });
 eq("toTricks now works", (await post({ action: "toTricks", code, hostKey })).status, 200);
 eq("player cannot enter tricks", (await post({ action: "setTrick", code, seatKey: players[1].seatKey, idx: 1, value: 0 })).body.error, "host_only");
@@ -67,7 +67,7 @@ eq("score round 1", (await post({ action: "score", code, hostKey })).status, 200
 eq("totals after round 1", (await view()).totals, [30, 20, 20, 20]);
 
 // ---- tricks must total the cards dealt ------------------------------------
-await bid(host, 1); await bid(players[1], 1); await bid(players[2], 0); await bid(players[3], 0);
+await bid(players[2], 0); await bid(players[3], 0); await bid(host, 1); await bid(players[1], 1);
 await post({ action: "toTricks", code, hostKey });
 for (const [idx, v] of [[0, 2], [1, 2], [2, 0], [3, 0]]) await post({ action: "setTrick", code, hostKey, idx, value: v });
 eq("mismatched tricks are refused", (await post({ action: "score", code, hostKey })).body.error, "tricks_sum");
@@ -83,7 +83,7 @@ eq("undo reopens the round in tricks", [undone.round, undone.phase], [2, "tricks
 await post({ action: "score", code, hostKey });
 
 // ---- final round ends the game -------------------------------------------
-await bid(host, 2); await bid(players[1], 1); await bid(players[2], 0); await bid(players[3], 0);
+await bid(players[3], 0); await bid(host, 2); await bid(players[1], 1); await bid(players[2], 0);
 await post({ action: "toTricks", code, hostKey });
 for (const [idx, v] of [[0, 2], [1, 1], [2, 0], [3, 0]]) await post({ action: "setTrick", code, hostKey, idx, value: v });
 await post({ action: "score", code, hostKey });
@@ -109,6 +109,7 @@ for (const n of ["B", "C", "D"]) {
   const r = await handlePost(store, { action: "join", code: rc, name: n });
   rPlayers.push({ seatKey: r.body.seatKey, idx: r.body.seatIdx });
 }
+await handlePost(store, { action: "settings", code: rc, hostKey: rHost.hostKey, bidding: "open" });
 await handlePost(store, { action: "start", code: rc, hostKey: rHost.hostKey });
 const results = await Promise.all(rPlayers.map((p, i) =>
   handlePost(store, { action: "bid", code: rc, seatKey: p.seatKey, idx: p.idx, value: i === 0 ? 1 : 0 })));
@@ -178,7 +179,11 @@ const viewOf = async (t, who) =>
 
 // ---- scoring variants ------------------------------------------------------
 const playRound = async (t, bids, tricks) => {
-  for (const s of t.seats) await post({ action: "bid", code: t.code, seatKey: s.seatKey, idx: s.idx, value: bids[s.idx] });
+  const order = (await viewOf(t)).order;   // the deal moves, so the bid order does too
+  for (const idx of order) {
+    const s = t.seats[idx];
+    await post({ action: "bid", code: t.code, seatKey: s.seatKey, idx: s.idx, value: bids[s.idx] });
+  }
   await post({ action: "toTricks", code: t.code, hostKey: t.hostKey });
   for (const s of t.seats) await post({ action: "setTrick", code: t.code, hostKey: t.hostKey, idx: s.idx, value: tricks[s.idx] });
   return post({ action: "score", code: t.code, hostKey: t.hostKey });
@@ -281,6 +286,181 @@ const playRound = async (t, bids, tricks) => {
   // readable by the rest of the table.
   const wire = JSON.stringify((await get({ code })).body.game);
   okTrue("no device id is exposed to other players", !wire.includes("dev-ben"), "clientId found in the payload");
+}
+
+// ===========================================================================
+// Deliberate submits: bids in turn, one write to score a round, one write to
+// seat the table, and a submit that can never land on the wrong round.
+// ===========================================================================
+
+// ---- bidding in turn is the default and is enforced --------------------------
+{
+  const t = await table(3, 5, ["A", "B", "C"]);
+  eq("in-turn bidding is the default", (await viewOf(t)).settings.bidding, "turn");
+  await post({ action: "start", code: t.code, hostKey: t.hostKey });
+  const g0 = await viewOf(t);
+  eq("the view says whose bid is due", g0.nextToBid, 1);
+  eq("and that turns are being taken", g0.inTurn, true);
+
+  const early = await post({ action: "bid", code: t.code, seatKey: t.seats[2].seatKey, idx: 2, value: 0 });
+  eq("bidding out of turn is refused", early.body.error, "not_your_turn");
+  okTrue("and the refusal names who is up", /B/.test(early.body.message), early.body.message);
+  const dealerEarly = await post({ action: "bid", code: t.code, seatKey: t.seats[0].seatKey, idx: 0, value: 0 });
+  eq("the dealer cannot jump the queue either", dealerEarly.body.error, "not_your_turn");
+
+  eq("the seat that is due can bid", (await post({ action: "bid", code: t.code, seatKey: t.seats[1].seatKey, idx: 1, value: 0 })).status, 200);
+  eq("the turn moves on", (await viewOf(t)).nextToBid, 2);
+  eq("the last bidder may change their mind", (await post({ action: "bid", code: t.code, seatKey: t.seats[1].seatKey, idx: 1, value: 1 })).status, 200);
+  await post({ action: "bid", code: t.code, seatKey: t.seats[2].seatKey, idx: 2, value: 0 });
+  eq("but not once someone has bid after them",
+    (await post({ action: "bid", code: t.code, seatKey: t.seats[1].seatKey, idx: 1, value: 0 })).body.error, "not_your_turn");
+  eq("nor take that bid back", (await post({ action: "clearBid", code: t.code, seatKey: t.seats[1].seatKey, idx: 1 })).body.error, "not_your_turn");
+  eq("the last bid can be taken back", (await post({ action: "clearBid", code: t.code, seatKey: t.seats[2].seatKey, idx: 2 })).status, 200);
+  await post({ action: "bid", code: t.code, seatKey: t.seats[2].seatKey, idx: 2, value: 0 });
+  await post({ action: "bid", code: t.code, seatKey: t.seats[0].seatKey, idx: 0, value: 1 });
+  eq("nobody is due once every bid is in", (await viewOf(t)).nextToBid, null);
+}
+
+// ---- all at once lets anyone bid whenever -----------------------------------
+{
+  const t = await table(3, 5, ["A", "B", "C"]);
+  await post({ action: "settings", code: t.code, hostKey: t.hostKey, bidding: "open" });
+  await post({ action: "start", code: t.code, hostKey: t.hostKey });
+  eq("all at once: no turn is due", (await viewOf(t)).nextToBid, null);
+  eq("the dealer may bid first", (await post({ action: "bid", code: t.code, seatKey: t.seats[0].seatKey, idx: 0, value: 1 })).status, 200);
+  eq("and anyone may change theirs", (await post({ action: "bid", code: t.code, seatKey: t.seats[0].seatKey, idx: 0, value: 0 })).status, 200);
+}
+
+// ---- a submit carries its round ----------------------------------------------
+{
+  const t = await table(2, 5, ["A", "B"]);
+  await post({ action: "settings", code: t.code, hostKey: t.hostKey, bidding: "open" });
+  await post({ action: "start", code: t.code, hostKey: t.hostKey });
+  eq("a bid tagged with the current round lands",
+    (await post({ action: "bid", code: t.code, seatKey: t.seats[1].seatKey, idx: 1, value: 0, round: 1 })).status, 200);
+  const late = await post({ action: "bid", code: t.code, seatKey: t.seats[0].seatKey, idx: 0, value: 1, round: 2 });
+  eq("one tagged with another round is refused, not misfiled", late.body.error, "stale_round");
+  eq("an untagged bid still works, for the solo page", (await post({ action: "bid", code: t.code, seatKey: t.seats[0].seatKey, idx: 0, value: 1 })).status, 200);
+  await post({ action: "toTricks", code: t.code, hostKey: t.hostKey });
+  eq("a score tagged with another round is refused",
+    (await post({ action: "scoreRound", code: t.code, hostKey: t.hostKey, tricks: { 0: 1, 1: 0 }, round: 9 })).body.error, "stale_round");
+  eq("and the round is still open", (await viewOf(t)).phase, "tricks");
+}
+
+// ---- the whole score sheet in one write ---------------------------------------
+{
+  const t = await table(3, 5, ["A", "B", "C"]);
+  await post({ action: "settings", code: t.code, hostKey: t.hostKey, bidding: "open" });
+  await post({ action: "start", code: t.code, hostKey: t.hostKey });
+  for (const s of t.seats) await post({ action: "bid", code: t.code, seatKey: s.seatKey, idx: s.idx, value: s.idx === 0 ? 1 : 0 });
+  eq("scoring before bidding closes is refused",
+    (await post({ action: "scoreRound", code: t.code, hostKey: t.hostKey, tricks: { 0: 1, 1: 0, 2: 0 }, round: 1 })).body.error, "wrong_phase");
+  await post({ action: "toTricks", code: t.code, hostKey: t.hostKey });
+  eq("a player cannot score",
+    (await post({ action: "scoreRound", code: t.code, seatKey: t.seats[1].seatKey, tricks: { 0: 1, 1: 0, 2: 0 }, round: 1 })).body.error, "host_only");
+  const missing = await post({ action: "scoreRound", code: t.code, hostKey: t.hostKey, tricks: { 0: 1, 1: 0 }, round: 1 });
+  eq("a sheet missing a seat is refused", missing.body.error, "tricks_missing");
+  okTrue("and says whose", /C/.test(missing.body.message), missing.body.message);
+  const wrong = await post({ action: "scoreRound", code: t.code, hostKey: t.hostKey, tricks: { 0: 1, 1: 1, 2: 0 }, round: 1 });
+  eq("a sheet that does not add up is refused before it can score", wrong.body.error, "tricks_sum");
+  eq("nothing was scored by the refusal", (await viewOf(t)).history.length, 0);
+  eq("a sheet that adds up scores the round in one write",
+    (await post({ action: "scoreRound", code: t.code, hostKey: t.hostKey, tricks: { 0: 1, 1: 0, 2: 0 }, round: 1 })).status, 200);
+  const g = await viewOf(t);
+  eq("totals are right", g.totals, [30, 20, 20]);
+  eq("and the table moved to round 2", [g.round, g.phase], [2, "bid"]);
+}
+
+// ---- the table is seated in one write ------------------------------------------
+{
+  const t = await table(4, 5, ["A", "B", "C", "D"]);
+  eq("a player cannot seat the table",
+    (await post({ action: "seating", code: t.code, seatKey: t.seats[1].seatKey, order: [3, 2, 1, 0] })).body.error, "host_only");
+  const saved = await post({
+    action: "seating", code: t.code, hostKey: t.hostKey,
+    order: [3, 2, 1, 0], dealerStart: 1, scoring: "noNegative", bidding: "open",
+  });
+  eq("order, dealer and rules land together", saved.status, 200);
+  const g = await viewOf(t);
+  eq("the seats are in the new order", g.seats.map((s) => s.name), ["D", "C", "B", "A"]);
+  eq("the dealer is the seat the host tapped, in the new order", g.dealerStart, 1);
+  eq("the rules came with it", [g.settings.scoring, g.settings.bidding], ["noNegative", "open"]);
+  eq("a bad order is refused as a whole",
+    (await post({ action: "seating", code: t.code, hostKey: t.hostKey, order: [0, 0, 1, 2] })).body.error, "bad_order");
+  await post({ action: "start", code: t.code, hostKey: t.hostKey });
+  eq("nothing can be reseated once dealt",
+    (await post({ action: "seating", code: t.code, hostKey: t.hostKey, dealerStart: 0 })).body.error, "already_started");
+}
+
+// ---- the scorekeeper runs the whole table from one phone ------------------------
+{
+  eq("naming one player is not a table",
+    (await post({ action: "create", hostRuns: true, names: ["Solo"] })).body.error, "too_few");
+
+  const made = await post({ action: "create", hostRuns: true, names: ["Ana", " Ben ", ""], rounds: 3 });
+  eq("a host-run game is created", made.status, 200);
+  const h = { code: made.body.code, hostKey: made.body.hostKey };
+  eq("the scorekeeper holds no seat", [made.body.seatKey, made.body.seatIdx], [null, null]);
+  const g0 = made.body.game;
+  eq("the view says the host runs it", g0.hostRuns, true);
+  eq("everyone named is seated, tidied, with a name for the blank", g0.seats.map((s) => s.name), ["Ana", "Ben", "Player 3"]);
+  eq("and every seat is the scorekeeper's to fill in", g0.seats.map((s) => s.managed), [true, true, true]);
+  eq("the deal is sized to the table", g0.rounds, 3);
+
+  eq("nobody can join a host-run table", (await post({ action: "join", code: h.code, name: "Dee" })).body.error, "host_runs");
+  const follower = await get({ code: h.code });
+  eq("but anyone with the code can follow along", follower.status, 200);
+  eq("as nobody in particular", [follower.body.game.isHost, follower.body.game.youIdx], [false, null]);
+
+  eq("a follower cannot add a player", (await post({ action: "addPlayer", code: h.code, name: "Dee" })).body.error, "not_allowed");
+  const added = await post({ action: "addPlayer", code: h.code, hostKey: h.hostKey, name: "Dee" });
+  eq("the scorekeeper adds a player in the lobby", [added.status, added.body.seatIdx], [200, 3]);
+  eq("who takes the next seat", (await get({ code: h.code })).body.game.seats.map((s) => s.name), ["Ana", "Ben", "Player 3", "Dee"]);
+  for (const n of ["E", "F", "G", "H"]) await post({ action: "addPlayer", code: h.code, hostKey: h.hostKey, name: n });
+  eq("eight is the most", (await post({ action: "addPlayer", code: h.code, hostKey: h.hostKey, name: "Nine" })).body.error, "full");
+  for (const idx of [7, 6, 5, 4]) await post({ action: "removePlayer", code: h.code, hostKey: h.hostKey, idx });
+  eq("and removed again", (await get({ code: h.code })).body.game.seats.map((s) => s.name), ["Ana", "Ben", "Player 3", "Dee"]);
+
+  await post({ action: "seating", code: h.code, hostKey: h.hostKey, dealerStart: 2 });
+  await post({ action: "removePlayer", code: h.code, hostKey: h.hostKey, idx: 1 });
+  const g1 = (await get({ code: h.code, hostKey: h.hostKey })).body.game;
+  eq("removing someone closes their seat and renumbers", g1.seats.map((s) => [s.idx, s.name]), [[0, "Ana"], [1, "Player 3"], [2, "Dee"]]);
+  eq("and the first dealer is still the same person", g1.seats[g1.dealerStart].name, "Player 3");
+
+  eq("it starts like any table", (await post({ action: "start", code: h.code, hostKey: h.hostKey })).status, 200);
+  eq("no more adding once dealt", (await post({ action: "addPlayer", code: h.code, hostKey: h.hostKey, name: "Late" })).body.error, "already_started");
+  const g2 = (await get({ code: h.code, hostKey: h.hostKey })).body.game;
+  eq("bidding is in turn, from the dealer's left", [g2.inTurn, g2.nextToBid], [true, 2]);
+  eq("the scorekeeper enters the bid that is due", (await post({ action: "bid", code: h.code, hostKey: h.hostKey, idx: 2, value: 1, round: 1 })).status, 200);
+  eq("but not one out of turn", (await post({ action: "bid", code: h.code, hostKey: h.hostKey, idx: 1, value: 0, round: 1 })).body.error, "not_your_turn");
+  eq("a follower cannot bid", (await post({ action: "bid", code: h.code, idx: 0, value: 0, round: 1 })).body.error, "not_allowed");
+  await post({ action: "bid", code: h.code, hostKey: h.hostKey, idx: 0, value: 0, round: 1 });
+  await post({ action: "bid", code: h.code, hostKey: h.hostKey, idx: 1, value: 0, round: 1 });
+  await post({ action: "toTricks", code: h.code, hostKey: h.hostKey });
+  const scored = await post({ action: "scoreRound", code: h.code, hostKey: h.hostKey, round: 1, tricks: { 0: 0, 1: 0, 2: 1 } });
+  eq("and scores the round", [scored.status, (await get({ code: h.code, hostKey: h.hostKey })).body.game.totals], [200, [20, 20, 30]]);
+  eq("which every follower sees", (await get({ code: h.code })).body.game.totals, [20, 20, 30]);
+}
+
+// ---- a phones table can seat someone with no phone ------------------------------
+{
+  const made = await post({ action: "create", name: "Host", seatCount: 3, rounds: 2 });
+  const h = { code: made.body.code, hostKey: made.body.hostKey, seatKey: made.body.seatKey };
+  const j = await post({ action: "join", code: h.code, name: "Phone" });
+  const added = await post({ action: "addPlayer", code: h.code, hostKey: h.hostKey, name: "Gran" });
+  eq("the no-phone player takes the open seat", [added.status, added.body.seatIdx], [200, 2]);
+  const g = (await get({ code: h.code, hostKey: h.hostKey })).body.game;
+  eq("and is the only managed seat", g.seats.map((s) => s.managed), [false, false, true]);
+  eq("the game is still a phones game", g.hostRuns, false);
+  eq("a phone's seat cannot be removed by the host", (await post({ action: "removePlayer", code: h.code, hostKey: h.hostKey, idx: 1 })).body.error, "has_phone");
+  eq("the table is full", (await post({ action: "join", code: h.code, name: "Late" })).body.error, "full");
+  await post({ action: "removePlayer", code: h.code, hostKey: h.hostKey, idx: 2 });
+  eq("removing the no-phone player opens the seat again", (await get({ code: h.code })).body.game.seats[2].joined, false);
+  await post({ action: "addPlayer", code: h.code, hostKey: h.hostKey, name: "Gran" });
+  await post({ action: "settings", code: h.code, hostKey: h.hostKey, bidding: "open" });
+  await post({ action: "start", code: h.code, hostKey: h.hostKey });
+  eq("the scorekeeper bids for the no-phone player", (await post({ action: "bid", code: h.code, hostKey: h.hostKey, idx: 2, value: 0, round: 1 })).status, 200);
+  eq("and the phone still bids for itself", (await post({ action: "bid", code: h.code, seatKey: j.body.seatKey, idx: 1, value: 1, round: 1 })).status, 200);
 }
 
 console.log(`${pass} passed, ${fails.length} failed`);

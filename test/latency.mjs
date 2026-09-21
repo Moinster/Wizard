@@ -62,17 +62,18 @@ await host.waitForFunction(() => document.querySelectorAll('.roster-name:not(.em
 await host.click('#do-start');
 await me.waitForSelector('.your-turn .chip', { timeout: 8000 });
 
-// Round 1 deals one card, so the bid chips are 0 and 1.
+// Round 1 deals one card, so the bid chips are 0 and 1. Jonas is left of the
+// dealer, so he is up first.
 const pressed = () => me.$eval('.chip[data-mybid="1"]', (el) => el.getAttribute('aria-pressed') === 'true');
 
 await me.click('.chip[data-mybid="1"]');
 
-// 1. The tap should show at once, not after the write returns.
+// 1. The pick is local: it shows at once, and nothing has gone anywhere.
 await me.waitForTimeout(150);
-check('the bid shows as selected right after the tap', await pressed(), true);
+check('the pick shows as selected right after the tap', await pressed(), true);
 
-// 2. And it must stay selected -- no deselect/reselect flicker while the
-//    write is in flight and polls keep arriving.
+// 2. And it must stay selected -- a pick never flickers, because no poll can
+//    disagree with a draft that only this phone knows about.
 const samples = [];
 for (let i = 0; i < 25; i++) {
   samples.push(await pressed());
@@ -80,10 +81,20 @@ for (let i = 0; i < 25; i++) {
 }
 const flickers = samples.filter((v) => v === false).length;
 check('it never flickers back off over 2.5s', flickers, 0);
+check('and the other phone has seen nothing yet', await host.$$eval('.bid-chip.in', (e) => e.length), 0);
 
-// 3. And the server really did record it, so the optimism was not a lie.
+// 3. Confirming sends it. The button holds until the slow write returns, so a
+//    second tap cannot send it twice, and the phone says when it is in.
+const t0 = Date.now();
+await me.click('#confirm-bid');
+await me.waitForSelector('.pill.sent', { timeout: 8000 });
+const took = Date.now() - t0;
+check('the phone confirms once the server has it', (await me.textContent('.pill.sent')).includes('Bid of 1 in'), true);
+check('and not before the write returned', took >= WRITE_DELAY_MS - 50, true);
+console.log(`    (the confirm held for ${took}ms against a ${WRITE_DELAY_MS}ms write)`);
 await host.waitForFunction(() => document.querySelectorAll('.bid-chip.in').length >= 1, null, { timeout: 8000 });
 check('the other phone sees the bid', await host.$$eval('.bid-chip.in', (e) => e.map((n) => n.textContent.trim())), ['1']);
+console.log(`    (a confirmed bid reached the other phone in ${Date.now() - t0}ms)`);
 
 console.log(`${pass} passed, ${fails.length} failed`);
 if (fails.length) console.log('\n' + fails.join('\n'));
