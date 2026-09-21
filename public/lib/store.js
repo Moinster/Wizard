@@ -120,12 +120,19 @@ export function blobStore(loadBlob = () => import("@vercel/blob")) {
         ...(ifNoneMatch ? { ifNoneMatch } : {}),
       });
 
-      // Reads have been seen to die mid-connection with ECONNRESET. One retry,
-      // and then the error goes up: the API has to answer a read it could not
+      // Reads fail transiently in two ways, and both used to reach the player.
+      // They die mid-connection with ECONNRESET; and, because an origin read
+      // bypasses the CDN, the store RATE LIMITS them and answers 403 once a
+      // burst gets hot enough — which is exactly what a table bidding at once
+      // produces. Neither means anything is wrong with the game, so both are
+      // backed off and retried here instead of becoming "something broke".
+      //
+      // Only after that does the error go up: the API has to answer a read it could not
       // make with a 500, never with the 404 that tells a player their game is
       // gone and clears it off their phone.
       let last = null;
-      for (let attempt = 0; attempt < 2; attempt++) {
+      for (let attempt = 0; attempt < 4; attempt++) {
+        if (attempt > 0) await pause(80 * 2 ** (attempt - 1) * (0.5 + Math.random()));
         try {
           const res = await ask();
           // get() reports an absent blob by RETURNING null, not by throwing --
@@ -145,6 +152,7 @@ export function blobStore(loadBlob = () => import("@vercel/blob")) {
         } catch (err) {
           if (isMissing(err, BlobNotFoundError)) return null;
           last = err;
+          if (!isTransient(err)) break;
         }
       }
       throw last;
@@ -169,6 +177,22 @@ export function blobStore(loadBlob = () => import("@vercel/blob")) {
       }
     },
   };
+}
+
+const pause = (ms) => new Promise((r) => setTimeout(r, ms));
+
+/**
+ * Worth trying again. A 403 here is the store shedding load from origin reads,
+ * not a permissions problem — the same token read the same key a moment ago.
+ * 429 and 5xx are the same story, and a connection that dies mid-read is too.
+ */
+function isTransient(err) {
+  if (!err) return false;
+  const status = err.status || err.statusCode;
+  if (status === 403 || status === 429 || (status >= 500 && status < 600)) return true;
+  const text = String(err.message || "") + " " + String((err.cause && err.cause.message) || "");
+  return /(\b403\b|\b429\b|forbidden|too many requests|rate limit)/i.test(text)
+    || /econnreset|etimedout|socket hang up|fetch failed/i.test(text);
 }
 
 /** No blob under that key — the one error that means "no game", not "broken". */

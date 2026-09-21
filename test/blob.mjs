@@ -40,11 +40,12 @@ class BlobAlreadyExistsError extends Error {
  * lags `origin` by one write, which is what the real CDN does and what makes
  * dropping useCache:false a test failure rather than a production incident.
  */
-function fakeBlob({ failReads = 0, throwOnMissing = false, etagOn304 = true } = {}) {
+function fakeBlob({ failReads = 0, throwOnMissing = false, etagOn304 = true, rateLimitReads = 0 } = {}) {
   const origin = new Map();   // pathname -> { body, etag }
   const cdn = new Map();
   let seq = 0;
   let readsLeftToFail = failReads;
+  let rateLimitedLeft = rateLimitReads;
   const calls = { get: [], put: [] };
 
   return {
@@ -61,6 +62,12 @@ function fakeBlob({ failReads = 0, throwOnMissing = false, etagOn304 = true } = 
           const err = new Error("fetch failed");
           err.cause = new Error("read ECONNRESET");
           throw err;
+        }
+        if (rateLimitedLeft > 0) {
+          // What the real store does to an origin-read burst: sheds it with a
+          // 403. The token is fine; it read the same key a moment ago.
+          rateLimitedLeft--;
+          throw new Error("Vercel Blob: Failed to fetch blob: 403 Forbidden");
         }
         const live = origin.get(pathname);
         // The real get() signals an absent blob by RETURNING null. The fake
@@ -206,6 +213,26 @@ function fakeBlob({ failReads = 0, throwOnMissing = false, etagOn304 = true } = 
 
   const through = await handleGet(store, { code: "GGGG", etag: first.etag });
   eq("the API passes that tag on", through.body.etag, first.etag);
+}
+
+// ---- the store shedding load is not the game breaking ---------------------
+{
+  // Origin reads bypass the CDN and the store rate limits them; a burst of
+  // joins walked into it and every one came back "something broke". A shed
+  // read is waited out, and is never mistaken for the game being gone.
+  const fake = fakeBlob({ rateLimitReads: 2 });
+  const store = blobStore(async () => fake.module);
+  await store.write("HHHH", { v: 1 }, null);
+  eq("a rate-limited read is waited out, not surfaced", (await store.read("HHHH")).data, { v: 1 });
+
+  const shedding = blobStore(async () => fakeBlob({ rateLimitReads: 99 }).module);
+  let threw = null;
+  try { await shedding.read("HHHH"); } catch (err) { threw = err; }
+  ok("a store that only ever sheds still raises, rather than claiming no game",
+    threw !== null && /403/.test(threw.message), String(threw && threw.message));
+  let apiThrew = false;
+  try { await handleGet(blobStore(async () => fakeBlob({ rateLimitReads: 99 }).module), { code: "HHHH" }); } catch { apiThrew = true; }
+  ok("and the API raises rather than answering 404", apiThrew, "it answered instead of raising");
 }
 
 // ---- end to end through the API, on the blob store -------------------------
