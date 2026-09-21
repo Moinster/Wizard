@@ -18,30 +18,9 @@ const fail = (status, error, message) => ({ status, body: { error, message } });
  * Read, mutate, write-if-unchanged, retry. `fn` may return {error, message} to
  * reject the whole attempt, or any other object to have its fields merged into
  * the response.
- *
- * Contention here is the normal case, not an edge case: everyone at the table
- * bids within a second or two of each other, every round. Only one writer can
- * win a round, so the Nth player needs N rounds -- and a round costs a read
- * plus a write, which is most of a second against Blob. A fixed five attempts
- * therefore turned players away by arithmetic alone: a six-player table could
- * not get its last bid in however well the network behaved.
- *
- * So retry against a DEADLINE rather than a count, and back off proportionally
- * so losers spread out instead of thrashing into each other. The budget stays
- * clear of the platform's own function timeout (10s by default on Vercel) so a
- * caller always gets a real answer rather than a dead connection. The player
- * sees none of this: the client renders their tap immediately and this only
- * has to land eventually.
  */
-const RETRY_BUDGET_MS = 7000;
-
-async function mutate(store, code, fn, opts = {}) {
-  const budget = opts.budgetMs ?? RETRY_BUDGET_MS;
-  const sleepFn = opts.sleep || sleep;
-  const now = opts.now || Date.now;
-  const deadline = now() + budget;
-
-  for (let attempt = 1; ; attempt++) {
+async function mutate(store, code, fn, tries = 5) {
+  for (let attempt = 0; attempt < tries; attempt++) {
     const current = await store.read(code);
     if (!current) return fail(404, "no_game", "No game with that code.");
     const next = clone(current.data);
@@ -51,13 +30,7 @@ async function mutate(store, code, fn, opts = {}) {
     next.updatedAt = Date.now();
     const written = await store.write(code, next, current.etag);
     if (written.ok) return { status: 200, body: { ...out, game: next } };
-
-    // Someone else got there first. Their write has just landed, so the state
-    // is fresh again; wait only long enough to not collide with the other
-    // losers, and give up only when there is no time left to try properly.
-    const wait = Math.min(600, 60 * 2 ** (attempt - 1)) * (0.5 + Math.random());
-    if (now() + wait >= deadline) break;
-    await sleepFn(wait);
+    await sleep(30 + Math.random() * 90);
   }
   return fail(409, "busy", "Too many phones wrote at once. Try that again.");
 }
