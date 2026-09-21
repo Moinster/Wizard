@@ -19,20 +19,18 @@ const fail = (status, error, message) => ({ status, body: { error, message } });
  * reject the whole attempt, or any other object to have its fields merged into
  * the response.
  *
- * A write can lose its race for two reasons, and a fixed short delay handles
- * neither. Another phone may have written first -- rarer now that bids are
- * confirmed one at a time and rounds are scored in one go, but still real. And
- * the store's origin read can lag its own last write by a moment, so a lone
- * writer re-reads the same stale tag as fast as it can and runs out of tries
- * with nobody else at the table. A six-player join was refused that way.
+ * The store's body read can lag its own last write by seconds, while head() is
+ * current at once. A phone that trusted the lagging read used to spend its
+ * whole budget writing against a version that was already gone -- a real game
+ * saw one write lose its race and then fail for another four seconds with
+ * nobody else writing. So before a write, and after a lost one, the body's
+ * version is checked against the store's, and a stale view is re-read rather
+ * than written from. Writes that lose are then genuine races, and a loser
+ * picks a slot in a window that widens to about one write's length.
  *
- * So a loser picks a slot in a window that WIDENS with each miss: near-instant
- * the first time, about a write's length by the third. Two writers that collided once stop
- * colliding, and a lagging read gets long enough to catch up. The budget stays
- * clear of the platform's 10s function timeout, and the player sees only a
- * button that says "Sending" for a moment longer -- it is latched, so nothing
- * can be sent twice. Only when the budget is truly spent are they asked to tap
- * again.
+ * The budget stays clear of the platform's 10s function timeout. The player
+ * sees only a latched "Sending" for a moment longer; only when the budget is
+ * truly spent are they asked to tap again -- and the reason is logged.
  */
 const RETRY_BUDGET_MS = 7000;
 
@@ -40,11 +38,26 @@ async function mutate(store, code, fn, opts = {}) {
   const budget = opts.budgetMs ?? RETRY_BUDGET_MS;
   const sleepFn = opts.sleep || sleep;
   const now = opts.now || Date.now;
+  const log = opts.log || ((...a) => console.warn(...a));
   const deadline = now() + budget;
+  let staleReads = 0, lostRaces = 0;
 
   for (let attempt = 1; ; attempt++) {
     const current = await store.read(code);
     if (!current) return fail(404, "no_game", "No game with that code.");
+
+    // A view the store itself says is behind is not worth writing from.
+    if (store.fresh) {
+      const live = await store.fresh(code);
+      if (live && current.etag && live !== current.etag) {
+        staleReads++;
+        const wait = Math.min(600, 150 * staleReads);
+        if (now() + wait >= deadline) break;
+        await sleepFn(wait);
+        continue;
+      }
+    }
+
     const next = clone(current.data);
     const out = fn(next) || {};
     if (out.error) return fail(400, out.error, out.message);
@@ -53,13 +66,12 @@ async function mutate(store, code, fn, opts = {}) {
     const written = await store.write(code, next, current.etag);
     if (written.ok) return { status: 200, body: { ...out, game: next } };
 
-    // The window grows to about one write's duration and stops there: a slot
-    // anywhere inside the winner's write is already clear of it, and sleeping
-    // longer just spends budget the last writer at a full table needs.
-    const wait = Math.min(600, 200 * attempt) * (0.5 + Math.random());
+    lostRaces++;
+    const wait = Math.min(600, 200 * lostRaces) * (0.5 + Math.random());
     if (now() + wait >= deadline) break;
     await sleepFn(wait);
   }
+  log(`wizard mutate: gave up on ${code} after ${lostRaces} lost race(s) and ${staleReads} stale read(s)`);
   return fail(409, "busy", "The table is busy. Tap it again.");
 }
 

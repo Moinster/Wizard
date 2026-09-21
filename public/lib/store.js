@@ -27,6 +27,10 @@ export function memoryStore() {
       if (ifNoneMatch && row.etag === ifNoneMatch) return { unchanged: true, etag: row.etag };
       return { data: JSON.parse(row.body), etag: row.etag };
     },
+    async fresh(code) {
+      const row = rows.get(code);
+      return row ? row.etag : null;
+    },
     async write(code, data, etag) {
       const row = rows.get(code);
       if (etag === null) {
@@ -60,6 +64,10 @@ export function localStorageStore(prefix = "wizard.game.") {
       if (!r) return null;
       if (ifNoneMatch && r.etag === ifNoneMatch) return { unchanged: true, etag: r.etag };
       return { data: r.data, etag: r.etag };
+    },
+    async fresh(code) {
+      const r = row(code);
+      return r ? r.etag : null;
     },
     async write(code, data, etag) {
       const r = row(code);
@@ -157,6 +165,23 @@ export function blobStore(loadBlob = () => import("@vercel/blob")) {
         }
       }
       throw last;
+    },
+
+    /**
+     * The version the store will actually check a write against. head() goes
+     * to the API and is current at once; a body read from origin can lag a
+     * write by seconds, and a phone that trusts the lagging read burns its
+     * whole budget writing against a version that is already gone.
+     */
+    async fresh(code) {
+      const { head } = await loadBlob();
+      try {
+        const meta = await head(keyFor(code));
+        return meta.etag || null;
+      } catch (err) {
+        if (isMissing(err, null)) return null;
+        throw err;
+      }
     },
 
     async write(code, data, etag) {
