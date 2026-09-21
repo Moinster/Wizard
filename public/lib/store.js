@@ -132,7 +132,8 @@ export function blobStore(loadBlob = () => import("@vercel/blob")) {
       // gone and clears it off their phone.
       let last = null;
       for (let attempt = 0; attempt < 4; attempt++) {
-        if (attempt > 0) await pause(80 * 2 ** (attempt - 1) * (0.5 + Math.random()));
+        // 150, 400, 900ms-ish: long enough to outlast a shedding window.
+        if (attempt > 0) await pause(150 * 2.4 ** (attempt - 1) * (0.7 + 0.6 * Math.random()));
         try {
           const res = await ask();
           // get() reports an absent blob by RETURNING null, not by throwing --

@@ -18,9 +18,31 @@ const fail = (status, error, message) => ({ status, body: { error, message } });
  * Read, mutate, write-if-unchanged, retry. `fn` may return {error, message} to
  * reject the whole attempt, or any other object to have its fields merged into
  * the response.
+ *
+ * A write can lose its race for two reasons, and a fixed short delay handles
+ * neither. Another phone may have written first -- rarer now that bids are
+ * confirmed one at a time and rounds are scored in one go, but still real. And
+ * the store's origin read can lag its own last write by a moment, so a lone
+ * writer re-reads the same stale tag as fast as it can and runs out of tries
+ * with nobody else at the table. A six-player join was refused that way.
+ *
+ * So a loser picks a slot in a window that WIDENS with each miss: near-instant
+ * the first time, about a write's length by the third. Two writers that collided once stop
+ * colliding, and a lagging read gets long enough to catch up. The budget stays
+ * clear of the platform's 10s function timeout, and the player sees only a
+ * button that says "Sending" for a moment longer -- it is latched, so nothing
+ * can be sent twice. Only when the budget is truly spent are they asked to tap
+ * again.
  */
-async function mutate(store, code, fn, tries = 5) {
-  for (let attempt = 0; attempt < tries; attempt++) {
+const RETRY_BUDGET_MS = 7000;
+
+async function mutate(store, code, fn, opts = {}) {
+  const budget = opts.budgetMs ?? RETRY_BUDGET_MS;
+  const sleepFn = opts.sleep || sleep;
+  const now = opts.now || Date.now;
+  const deadline = now() + budget;
+
+  for (let attempt = 1; ; attempt++) {
     const current = await store.read(code);
     if (!current) return fail(404, "no_game", "No game with that code.");
     const next = clone(current.data);
@@ -30,9 +52,15 @@ async function mutate(store, code, fn, tries = 5) {
     next.updatedAt = Date.now();
     const written = await store.write(code, next, current.etag);
     if (written.ok) return { status: 200, body: { ...out, game: next } };
-    await sleep(30 + Math.random() * 90);
+
+    // The window grows to about one write's duration and stops there: a slot
+    // anywhere inside the winner's write is already clear of it, and sleeping
+    // longer just spends budget the last writer at a full table needs.
+    const wait = Math.min(600, 200 * attempt) * (0.5 + Math.random());
+    if (now() + wait >= deadline) break;
+    await sleepFn(wait);
   }
-  return fail(409, "busy", "Too many phones wrote at once. Try that again.");
+  return fail(409, "busy", "The table is busy. Tap it again.");
 }
 
 /** The host may act for any seat; a player may only act for their own. */
