@@ -116,28 +116,14 @@ export function localStorageStore(prefix = "wizard.game.") {
  * this module stays loadable in a browser, where the client only ever reaches
  * localStorageStore and never enters this function.
  */
-/**
- * Public and private blobs live at different hosts, so a game written one way
- * cannot be read the other. Reads must be private (see read()), and a write
- * has to match its reads. Nothing else may see the token-guarded URL anyway;
- * the phones only ever talk to the API.
- */
-const ACCESS = "private";
-
 export function blobStore(loadBlob = () => import("@vercel/blob")) {
   return {
     name: "blob",
 
     async read(code, ifNoneMatch = null) {
       const { get, BlobNotFoundError } = await loadBlob();
-      // Private, not public, and not for secrecy: in this SDK useCache:false
-      // only adds cache=0 to the URL when the access is private. Ask for a
-      // public blob and the option is dropped without a word, so every read
-      // comes off the CDN -- seconds behind a write, and behind one's OWN
-      // write, which is what kept a lone host's Start busy for a full budget
-      // and made the other phones wait half a minute to see it.
       const ask = () => get(keyFor(code), {
-        access: ACCESS,
+        access: "public",
         useCache: false,
         ...(ifNoneMatch ? { ifNoneMatch } : {}),
       });
@@ -202,7 +188,7 @@ export function blobStore(loadBlob = () => import("@vercel/blob")) {
       const { put } = await loadBlob();
       try {
         await put(keyFor(code), JSON.stringify(data), {
-          access: ACCESS,
+          access: "public",
           addRandomSuffix: false,
           allowOverwrite: etag !== null,
           contentType: "application/json",

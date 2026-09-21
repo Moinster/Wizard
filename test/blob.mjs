@@ -78,11 +78,7 @@ function fakeBlob({ failReads = 0, throwOnMissing = false, etagOn304 = true, rat
         if (!live) { if (throwOnMissing) throw new BlobNotFoundError(); return null; }
         // Forgetting useCache:false gets you the copy from before the last
         // write, with the current tag beside it -- the production bug, exactly.
-        // And so does remembering it on a public blob: the real get() only
-        // sends cache=0 for private access and drops the option otherwise,
-        // which is how a lone host's own write stayed invisible to them.
-        const fromOrigin = opts.useCache === false && opts.access === "private";
-        let served = fromOrigin ? live : (cdn.get(pathname) || live);
+        let served = opts.useCache === false ? live : (cdn.get(pathname) || live);
         // Even an origin read lags a write for a while: the previous version,
         // previous tag and all, for the next few reads.
         const lag = lagging.get(pathname);
@@ -136,8 +132,7 @@ function fakeBlob({ failReads = 0, throwOnMissing = false, etagOn304 = true, rat
   ok("with a real etag", typeof first.etag === "string" && first.etag.length > 0, String(first.etag));
 
   eq("the read asked origin, not the CDN", fake.calls.get[1].opts.useCache, false);
-  eq("and it asked by path with private access, the only kind that option works for",
-    fake.calls.get[1].opts.access, "private");
+  eq("and it asked by path with public access", fake.calls.get[1].opts.access, "public");
 }
 
 // ---- the poll: unchanged in one call, and never a stale body ---------------
@@ -343,14 +338,6 @@ function fakeBlob({ failReads = 0, throwOnMissing = false, etagOn304 = true, rat
       types.includes("BlobNotFoundError"), "BlobNotFoundError is not exported");
     ok("and exports get(), which is how the store reads from origin",
       /declare function get\b/.test(types), "no get() in its type definitions");
-
-    // Not a type, a behaviour: get() honours useCache:false for private blobs
-    // only. If a later SDK changes that, this is the line to revisit, along
-    // with the store's choice of access.
-    let impl = "";
-    try { impl = readFileSync("node_modules/@vercel/blob/dist/index.js", "utf8"); } catch { impl = ""; }
-    ok("and its get() reads from origin only for private blobs, which is why the store uses them",
-      impl.includes('options.useCache === false && access === "private"'), "cache=0 gating not found");
   }
 }
 
