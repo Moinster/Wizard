@@ -161,12 +161,20 @@ function adopt(data){
  * eases off, and any change snaps it straight back.
  */
 let quietPolls = 0;
+/**
+ * How long to wait before asking again. Activity at a table comes in bursts --
+ * everyone bids within a couple of seconds, then nothing happens while a hand
+ * is played -- so this chases a change rather than polling at one flat rate:
+ * quick while the board is still moving, easing off once it has gone quiet.
+ * An unchanged poll costs a 304 with no body, so the quick phase is cheap.
+ */
 function pollGap(){
   if (document.hidden) return 5000;
   if (!game) return 2000;
-  if (game.status === "lobby") return 1200;
   if (game.status === "done") return 3000;
-  return quietPolls >= 10 ? 2500 : 1200;
+  if (game.status === "lobby") return quietPolls >= 10 ? 1600 : 800;
+  if (quietPolls < 3) return 600;      // something just moved; more is coming
+  return quietPolls >= 10 ? 2500 : 1100;
 }
 
 function startPolling(){
