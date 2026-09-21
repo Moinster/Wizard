@@ -249,9 +249,11 @@ CDN lag described under *Where a game lives on Vercel*.
   game with five players is tens of thousands of invocations. Fine for a hobby
   project; worth knowing before it surprises you on a bill.
 
-Finished games stay in `wizard_games` until deleted; `updated_at` says when a
-table was last touched, so clearing anything older than a week is one
-`DELETE`. It is a card game score sheet, not a secret store.
+A game exists only while it is being played. The scorekeeper's **Close the
+table** on the final screen deletes its row outright; the other phones keep
+the final scores on screen until they leave. Nothing is archived. Whatever
+nobody closed is swept on the next create: a finished game an hour on, or any
+game untouched for a day. It is a card game score sheet, not a record.
 
 If you would rather not run a database at all, `server.js` on any host that runs
 a Node process needs none of this — see the sections above.

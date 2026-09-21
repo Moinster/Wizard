@@ -41,6 +41,9 @@ export function memoryStore() {
       rows.set(code, { body: JSON.stringify(data), etag: `m${++seq}` });
       return { ok: true };
     },
+    async remove(code) {
+      return { ok: rows.delete(code) };
+    },
   };
 }
 
@@ -82,6 +85,11 @@ export function localStorageStore(prefix = "wizard.game.") {
         return { ok: false }; // private window, or storage full
       }
       return { ok: true };
+    },
+    async remove(code) {
+      const had = row(code) !== null;
+      try { localStorage.removeItem(prefix + code); } catch {}
+      return { ok: had };
     },
   };
 }
@@ -196,11 +204,17 @@ export function blobStore(loadBlob = () => import("@vercel/blob")) {
         });
         return { ok: true };
       } catch (err) {
-        // A precondition failure means another phone wrote first, and the
+        // A precondition failure means another phone write first, and the
         // caller retries. Anything else is a real fault and should surface.
         if (isConflict(err)) return { ok: false };
         throw err;
       }
+    },
+
+    async remove(code) {
+      const { del } = await loadBlob();
+      await del(keyFor(code));   // deleting a blob that is already gone is not an error
+      return { ok: true };
     },
   };
 }
@@ -304,6 +318,12 @@ export function supabaseStore({ url, key, fetchFn = (...a) => globalThis.fetch(.
       // The function answers the new version, or null when the write lost:
       // another phone wrote first, or a create found the code taken.
       return { ok: typeof version === "number" };
+    },
+
+    /** A game exists only while it is played; this is how it stops existing. */
+    async remove(code) {
+      const gone = await rpc("wizard_delete", { p_code: code });
+      return { ok: gone === true };
     },
   };
 }
