@@ -7,9 +7,14 @@ It runs two ways off the same code, and works out which one it's in by itself:
 | | How to run it | What you get |
 |---|---|---|
 | **One device** | Open the [web page](https://moinster.github.io/Wizard/) | The scorekeeper's phone takes every bid and every trick. Nothing leaves the device. |
-| **Every phone** | `node server.js` on the Wi-Fi | Each player bids from their own phone; everyone sees every score update live. |
+| **Every phone** | `node server.js`, on your Wi-Fi or on a host | Each player bids from their own phone; everyone sees every score update live. |
 
 No accounts, no database, no sign-up either way.
+
+**The GitHub Pages link is always the one-device version.** Pages serves files;
+it cannot run a process, so there is no server behind that URL to pass bids
+between phones. Multi-phone needs `server.js` running somewhere — a laptop on
+your Wi-Fi, or a host (see [Putting it on the internet](#putting-it-on-the-internet)).
 
 ## One device — the web page
 
@@ -45,6 +50,24 @@ hold the screen up: everyone else points a camera at the QR code and they're in.
 Anyone who'd rather type gets a four-letter code instead.
 
 Pass a port as an argument if 3000 is busy: `node server.js 8080`.
+
+### Putting it on the internet
+
+To play with people who aren't on your Wi-Fi, run the same server on anything
+that runs a Node process. There is nothing to configure: no database, no
+environment variables, no build step.
+
+`render.yaml` is a ready-made blueprint — point Render at this repository and it
+picks it up. Any equivalent host works the same way; the only thing a platform
+has to do is set `PORT`, which the server reads.
+
+Two things to know before you rely on it:
+
+- **Games live in the process's memory.** If the host restarts or redeploys
+  mid-game, the game is gone. A game in progress keeps the process awake by
+  itself, because every phone polls about once a second.
+- **A free tier that sleeps when idle** will take a while to wake on the first
+  request of the evening. Start the game a minute before you deal.
 
 ### How a game runs
 
@@ -110,6 +133,7 @@ all, so it cannot be read out of the page.
 
 ```
 server.js               the server: static files plus the API, state in memory
+render.yaml             deploy blueprint for a host that runs a Node process
 public/index.html       markup and styles
 public/app.js           the client
 public/qr.js            QR encoder (byte mode, level M, versions 1-10)

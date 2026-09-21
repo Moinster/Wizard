@@ -1,0 +1,11 @@
+# Deploy target for a host that runs a Node process, so every phone can reach
+# one server. Nothing to configure: no database, no environment variables, no
+# build step -- games live in the process's memory.
+services:
+  - type: web
+    name: wizard-scorekeeper
+    runtime: node
+    plan: free
+    buildCommand: ''
+    startCommand: node server.js
+    healthCheckPath: /api/health

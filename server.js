@@ -71,12 +71,22 @@ function lanAddresses() {
     .map((i) => i.address);
 }
 
-const port = Number(process.argv[2]) || 3000;
+// A hosting platform tells the process which port to bind through PORT; an
+// argument overrides it for local use. Ignoring PORT binds the wrong one and
+// the platform's router never reaches us, which looks like a successful
+// deploy serving nothing.
+const port = Number(process.argv[2]) || Number(process.env.PORT) || 3000;
 // Bind every interface, not just loopback, or nothing else on the Wi-Fi can reach it.
+const hosted = Boolean(process.env.PORT);
+
 server.listen(port, "0.0.0.0", () => {
   console.log(`\n  Wizard Scorekeeper\n`);
-  console.log(`  this computer   http://localhost:${port}`);
-  for (const ip of lanAddresses()) console.log(`  other phones    http://${ip}:${port}`);
-  if (!lanAddresses().length) console.log("  (no network interface found \u2014 other devices can't reach this)");
-  console.log(`\n  Games live in memory: stopping the server clears them.\n`);
+  if (hosted) {
+    console.log(`  listening on port ${port}`);
+  } else {
+    console.log(`  this computer   http://localhost:${port}`);
+    for (const ip of lanAddresses()) console.log(`  other phones    http://${ip}:${port}`);
+    if (!lanAddresses().length) console.log("  (no network interface found \u2014 other devices can't reach this)");
+  }
+  console.log(`\n  Games live in memory: restarting the server clears them.\n`);
 });
